@@ -14,11 +14,15 @@ Além disso, o script realiza backups automáticos de arquivos críticos antes d
    - Verifica espaço em disco antes de criar o arquivo de swap.
    - Cria ou recria arquivos de swap conforme necessário.
    - Realiza backups dos arquivos:
-       > /etc/fstab
-       > /etc/sysctl.conf
+     
+     > /etc/fstab
+     > /etc/sysctl.conf
+      
    - Adiciona configurações de desempenho no sistema:
-       > vm.swappiness=10: Reduz o uso excessivo do swap.
-       > vm.vfs_cache_pressure=50: Melhora o balanceamento entre cache e memória de arquivos.
+
+     > vm.swappiness=10: Reduz o uso excessivo do swap.
+     > vm.vfs_cache_pressure=50: Melhora o balanceamento entre cache e memória de arquivos.
+   
    - Contagem regressiva interativa antes de reiniciar o sistema.
 
 🛠️ Pré-requisitos
@@ -32,14 +36,16 @@ Além disso, o script realiza backups automáticos de arquivos críticos antes d
 1. Baixe o script ou clone o repositorio
 
 2. Para rodar o script você pode conceder permissão de execução:
-    ```bash
+
+   ```bash
     chmod +x swap.sh
 
 4. Execute o script:
+
    ```Bash
    sudo ./swap.sh
 
-5. Aguarde o script executar, ele irá informa-lo durante todo o processo e alertá-lo caso algo esteja errado (como falta de espaço em disco).
+6. Aguarde o script executar, ele irá informa-lo durante todo o processo e alertá-lo caso algo esteja errado (como falta de espaço em disco).
 
 
 📂 Backups Gerados
