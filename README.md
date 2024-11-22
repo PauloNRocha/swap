@@ -15,13 +15,13 @@ Além disso, o script realiza backups automáticos de arquivos críticos antes d
    - Cria ou recria arquivos de swap conforme necessário.
    - Realiza backups dos arquivos:
      
-     > /etc/fstab
-     > /etc/sysctl.conf
+     /etc/fstab
+     /etc/sysctl.conf
       
    - Adiciona configurações de desempenho no sistema:
 
-     > vm.swappiness=10: Reduz o uso excessivo do swap.
-     > vm.vfs_cache_pressure=50: Melhora o balanceamento entre cache e memória de arquivos.
+     vm.swappiness=10: Reduz o uso excessivo do swap.
+     vm.vfs_cache_pressure=50: Melhora o balanceamento entre cache e memória de arquivos.
    
    - Contagem regressiva interativa antes de reiniciar o sistema.
 
