@@ -1,4 +1,4 @@
-# Script para configur automáticamente o Swap no Linux
+# Script para configurar automáticamente o Swap no Linux
 
 📄 Descrição
 
