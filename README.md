@@ -1,10 +1,12 @@
 # Script para configurar automáticamente o Swap no Linux
 
+
 📄 Descrição
 
 Este script foi projetado para automatizar a configuração/criação da memória swap em sistemas Linux. Ele detecta a memória RAM disponível, define o tamanho ideal de swap, verifica o espaço disponível em disco, e ajusta parâmetros de desempenho do sistema.
 
 Além disso, o script realiza backups automáticos de arquivos críticos antes de qualquer alteração, garantindo segurança nas operações. A partir da versão 1.1.4, também detecta e desativa partições de swap antigas, removendo suas entradas do /etc/fstab.
+
 
 
 ⚙️ Recursos
@@ -35,11 +37,15 @@ Além disso, o script realiza backups automáticos de arquivos críticos antes d
 
   ⏲️ Contagem regressiva interativa antes de reiniciar o sistema.
 
+
+
 🛠️ Pré-requisitos
 
  -  Sistema operacional baseado em Linux (Debian/Ubuntu).
  -  Acesso root ou permissões administrativas.
  -  Espaço disponível suficiente para criação do arquivo de swap.
+
+
 
 📥 Como Usar
 
@@ -57,6 +63,7 @@ Além disso, o script realiza backups automáticos de arquivos críticos antes d
 Durante a execução, o script informará todas as ações realizadas e alertará em caso de problemas (como falta de espaço em disco).
 
 
+
 📂 Backups Gerados
 
   - /etc/fstab: Backup no formato /etc/fstab.backup.<data+hora>.
@@ -64,14 +71,20 @@ Durante a execução, o script informará todas as ações realizadas e alertar�
 
 Esses backups garantem que você possa restaurar os arquivos originais em caso de necessidade.
 
+
+
 ⚠️ Avisos
 
    💽 Espaço em disco: o script checa antes de criar o swap. Caso não haja espaço suficiente, a operação será abortada.
    🔁 Reinicialização: algumas configurações exigem reinício. O script oferece contagem regressiva e opção para cancelar.
 
+
+
 🛡️ Licença
 
 Este projeto está licenciado sob a licença MIT License, permitindo uso, modificação e distribuição livre, desde que sejam mantidos os créditos ao autor.
+
+
 
 🤝 Contribuição
 
