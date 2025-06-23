@@ -1,6 +1,5 @@
 #!/bin/bash
-# Version: 1.1.2
-
+# Version: 1.1.4
 
 # Função para exibir mensagens com cores
 msg() {
@@ -45,15 +44,19 @@ msg blue "Detectando quantidade de RAM..."
 total_ram_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
 total_ram_mb=$((total_ram_kb / 1024))
 
-# Define tamanho do swap com base na RAM
-case $total_ram_mb in
-  [0-1024])   swap_size="2G" ;;
-  [1-2][0-9][0-9][0-9]) swap_size="4G" ;; # 1025-2999 MB
-  [3-4][0-9][0-9][0-9]) swap_size="6G" ;; # 3000-4999 MB
-  [5-8][0-9][0-9][0-9]) swap_size="8G" ;; # 5000-8999 MB
-  1[0-6][0-9][0-9][0-9]) swap_size="16G" ;; # 10000-16999 MB
-  *) swap_size="32G" ;; # >= 17000 MB
-esac
+if [ "$total_ram_mb" -le 1024 ]; then
+  swap_size="2G"
+elif [ "$total_ram_mb" -le 2048 ]; then
+  swap_size="4G"
+elif [ "$total_ram_mb" -le 4096 ]; then
+  swap_size="6G"
+elif [ "$total_ram_mb" -le 8192 ]; then
+  swap_size="8G"
+elif [ "$total_ram_mb" -le 16384 ]; then
+  swap_size="16G"
+else
+  swap_size="32G"
+fi
 msg green "RAM detectada: ${total_ram_mb}MB. Tamanho do swap: $swap_size."
 
 # Verifica espaço em disco
@@ -66,6 +69,21 @@ if [ "$available_space_bytes" -lt "$swap_size_bytes" ]; then
   exit 1
 fi
 msg green "Espaço suficiente detectado."
+
+# Desativa outras partições swap do tipo partition
+msg blue "Desativando partições de swap ativas..."
+swap_devices=$(swapon --show=NAME,TYPE --noheadings | awk '$2 == "partition" { print $1 }' | grep -v "/swapfile")
+for dev in $swap_devices; do
+  swapoff "$dev"
+  msg yellow "Swap desativado: $dev"
+  uuid=$(blkid -s UUID -o value "$dev")
+  if [ -n "$uuid" ]; then
+    sed -i "/UUID=$uuid.*swap/d" /etc/fstab
+    msg yellow "Linha removida do /etc/fstab para UUID=$uuid"
+  fi
+  sed -i "/$(basename "$dev").*swap/d" /etc/fstab
+  msg yellow "Linha removida do /etc/fstab para $dev"
+done
 
 # Gerencia arquivo de swap
 msg blue "Verificando swap existente..."
@@ -98,11 +116,11 @@ else
   msg red "Erro ao criar backup do /etc/fstab."
   exit 1
 fi
-if grep -q '/swapfile' /etc/fstab; then
-  msg green "Swap já configurado no /etc/fstab."
-else
+if ! grep -q '/swapfile' /etc/fstab; then
   echo '/swapfile none swap sw 0 0' >> /etc/fstab
   msg green "Swap adicionado ao /etc/fstab."
+else
+  msg green "Swap já configurado no /etc/fstab."
 fi
 
 # Configura parâmetros de desempenho
@@ -122,6 +140,7 @@ for param in "vm.swappiness=10" "vm.vfs_cache_pressure=50"; do
     echo "$param" >> /etc/sysctl.conf
     msg green "Parâmetro $param adicionado."
   fi
+
 done
 sysctl vm.swappiness=10 > /dev/null
 sysctl vm.vfs_cache_pressure=50 > /dev/null
