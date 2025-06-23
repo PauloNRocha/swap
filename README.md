@@ -10,17 +10,25 @@ Além disso, o script realiza backups automáticos de arquivos críticos antes d
 ⚙️ Recursos
 
   ✅ Verifica conectividade com a internet antes de atualizar o sistema.
+  
   🔄 Atualiza pacotes e realiza limpeza automática do sistema.
+  
   🧠 Detecta a quantidade de RAM e ajusta dinamicamente o tamanho ideal do swap.
+  
   💾 Verifica espaço em disco antes de criar ou recriar o arquivo de swap.
+  
   🧹 Desativa partições de swap criadas na instalação e remove entradas antigas do /etc/fstab.
+  
   🛡️ Cria ou recria arquivos de swap conforme necessário.
+  
   📦 Realiza backups automáticos dos arquivos:
      /etc/fstab
      /etc/sysctl.conf
+  
   ⚙️ Adiciona configurações de desempenho no sistema:
      vm.swappiness=10 – Reduz o uso excessivo de swap.
      vm.vfs_cache_pressure=50 – Melhora o balanceamento entre cache e arquivos.
+
   ⏲️ Contagem regressiva interativa antes de reiniciar o sistema.
 
 🛠️ Pré-requisitos
