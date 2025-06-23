@@ -1,146 +1,147 @@
 #!/bin/bash
+# Version: 1.1.2
 
+
+# Função para exibir mensagens com cores
+msg() {
+  local color=$1
+  shift
+  case $color in
+    "red")    echo -e "\e[31m$*\e[0m" ;;
+    "green")  echo -e "\e[32m$*\e[0m" ;;
+    "yellow") echo -e "\e[33m$*\e[0m" ;;
+    "blue")   echo -e "\e[34m$*\e[0m" ;;
+  esac
+}
+
+# Verifica se é executado como root
 if [ "$EUID" -ne 0 ]; then
-  echo -e "\e[31mEste script deve ser executado como root ou com permissões de root.\e[0m"
+  msg red "Este script deve ser executado como root."
   exit 1
 fi
-echo -e "\n\e[32mVerificação de root bem-sucedida! Continuando a execução do script...\e[0m\n"
-sleep 2
+msg green "Verificação de root bem-sucedida!"
 
-echo -e "\e[34mVerificando conectividade com a internet...\e[0m\n"
-sleep 1
+# Verifica se o sistema usa apt
+if ! command -v apt &> /dev/null; then
+  msg red "Este script é compatível apenas com sistemas baseados em Debian/Ubuntu (apt)."
+  exit 1
+fi
+
+# Verifica conectividade com a internet
+msg blue "Verificando conectividade com a internet..."
 if ping -c 1 8.8.8.8 > /dev/null 2>&1; then
-  echo -e "\e[32mConexão com a internet detectada. Continuando para atualização do sistema...\e[0m\n"
-  sleep 2
-  echo -e "\e[34mAtualizando seu sistema...\e[0m\n"
-  apt update > /dev/null 2>&1 && apt upgrade -y > /dev/null 2>&1 && apt autoremove -y > /dev/null 2>&1 && apt autoclean -y > /dev/null 2>&1
-  if [ $? -eq 0 ]; then
-    echo -e "\e[32mSistema atualizado com sucesso.\e[0m\n"
+  msg green "Conexão detectada. Atualizando o sistema..."
+  if apt update > /dev/null 2>&1 && apt upgrade -y > /dev/null 2>&1 && apt autoremove -y > /dev/null 2>&1 && apt autoclean -y > /dev/null 2>&1; then
+    msg green "Sistema atualizado com sucesso."
   else
-    echo -e "\e[31mErro ao atualizar o sistema. Verifique sua configuração de repositórios.\e[0m\n"
+    msg red "Erro ao atualizar o sistema. Verifique os repositórios."
   fi
 else
-  echo -e "\e[31mNenhuma conexão com a internet detectada. Pulando a etapa de atualização do sistema.\e[0m\n"
+  msg yellow "Sem conexão com a internet. Pulando atualização."
 fi
-sleep 2
 
-echo -e "\e[34mDetectando quantidade de RAM disponível...\e[0m\n"
-sleep 1
+# Detecta quantidade de RAM
+msg blue "Detectando quantidade de RAM..."
 total_ram_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
 total_ram_mb=$((total_ram_kb / 1024))
 
-if [ "$total_ram_mb" -le 1024 ]; then
-  swap_size="2G"
-elif [ "$total_ram_mb" -le 2048 ]; then
-  swap_size="4G"
-elif [ "$total_ram_mb" -le 4096 ]; then
-  swap_size="6G"
-elif [ "$total_ram_mb" -le 8192 ]; then
-  swap_size="8G"
-elif [ "$total_ram_mb" -le 16384 ]; then
-  swap_size="16G"
-else
-  swap_size="32G"
-fi
-echo -e "\e[32mRAM detectada: ${total_ram_mb}MB. Tamanho do swap definido para: $swap_size.\e[0m\n"
-sleep 2
+# Define tamanho do swap com base na RAM
+case $total_ram_mb in
+  [0-1024])   swap_size="2G" ;;
+  [1-2][0-9][0-9][0-9]) swap_size="4G" ;; # 1025-2999 MB
+  [3-4][0-9][0-9][0-9]) swap_size="6G" ;; # 3000-4999 MB
+  [5-8][0-9][0-9][0-9]) swap_size="8G" ;; # 5000-8999 MB
+  1[0-6][0-9][0-9][0-9]) swap_size="16G" ;; # 10000-16999 MB
+  *) swap_size="32G" ;; # >= 17000 MB
+esac
+msg green "RAM detectada: ${total_ram_mb}MB. Tamanho do swap: $swap_size."
 
-echo -e "\e[34mVerificando espaço disponível em disco...\e[0m\n"
-sleep 1
+# Verifica espaço em disco
+msg blue "Verificando espaço em disco..."
 swap_size_bytes=$(( ${swap_size%G} * 1024 * 1024 * 1024 ))
 available_space_bytes=$(df --block-size=1 / | awk 'NR==2 {print $4}')
 
 if [ "$available_space_bytes" -lt "$swap_size_bytes" ]; then
-  echo -e "\e[31mEspaço insuficiente em disco para criar um arquivo de swap de $swap_size. Operação abortada.\e[0m\n"
+  msg red "Espaço insuficiente para criar swap de $swap_size."
   exit 1
-else
-  echo -e "\e[32mEspaço suficiente detectado para criar o arquivo de swap.\e[0m\n"
 fi
-sleep 2
+msg green "Espaço suficiente detectado."
 
-echo -e "\e[34mVerificando swap existente...\e[0m\n"
-sleep 1
+# Gerencia arquivo de swap
+msg blue "Verificando swap existente..."
 if swapon --show | grep -q '/swapfile'; then
-  atual_swap_size=$(swapon --show --bytes | grep '/swapfile' | awk '{print $3}')
-  if [ "$atual_swap_size" -lt "$swap_size_bytes" ]; then
-    echo -e "\e[33mSwap existente é menor do que o necessário. Recriando...\e[0m\n"
-    sleep 2
-    swapoff /swapfile > /dev/null 2>&1
-    rm /swapfile > /dev/null 2>&1
-    fallocate -l $swap_size /swapfile > /dev/null 2>&1
-    chmod 600 /swapfile > /dev/null 2>&1
-    mkswap /swapfile > /dev/null 2>&1
-    swapon /swapfile > /dev/null 2>&1
-    echo -e "\e[32mArquivo de swap recriado com sucesso.\e[0m\n"
+  current_swap_size=$(swapon --show --bytes | grep '/swapfile' | awk '{print $3}')
+  if [ "$current_swap_size" -lt "$swap_size_bytes" ]; then
+    msg yellow "Swap existente é menor. Recriando..."
+    swapoff /swapfile && rm /swapfile &&
+    fallocate -l "$swap_size" /swapfile && chmod 600 /swapfile &&
+    mkswap /swapfile > /dev/null 2>&1 && swapon /swapfile
+    msg green "Arquivo de swap recriado."
   else
-    echo -e "\e[32mSwap existente é suficiente. Nenhuma alteração necessária.\e[0m\n"
+    msg green "Swap existente é suficiente."
   fi
 else
-  echo -e "\e[34mNenhum swap detectado. Criando novo arquivo de swap...\e[0m\n"
-  sleep 2
-  fallocate -l $swap_size /swapfile > /dev/null 2>&1
-  chmod 600 /swapfile > /dev/null 2>&1
-  mkswap /swapfile > /dev/null 2>&1
-  swapon /swapfile > /dev/null 2>&1
-  echo -e "\e[32mArquivo de swap criado com sucesso.\e[0m\n"
+  msg blue "Criando novo arquivo de swap..."
+  fallocate -l "$swap_size" /swapfile &&
+  chmod 600 /swapfile &&
+  mkswap /swapfile > /dev/null 2>&1 &&
+  swapon /swapfile
+  msg green "Arquivo de swap criado."
 fi
-sleep 2
 
-echo -e "\e[34mConfigurando o /etc/fstab para montagem automática do swap...\e[0m\n"
-sleep 1
-backup_fstab="/etc/fstab.backup.$(date +'%Y-%m-%d_%H-%M-%S')"
-cp /etc/fstab "$backup_fstab" > /dev/null 2>&1
-echo -e "\e[32mBackup do /etc/fstab criado em $backup_fstab.\e[0m\n"
-sleep 1
+# Configura /etc/fstab
+msg blue "Configurando /etc/fstab..."
+backup_fstab="/etc/fstab.backup.$(date +%Y-%m-%d_%H-%M-%S)"
+if cp /etc/fstab "$backup_fstab"; then
+  msg green "Backup do /etc/fstab criado em $backup_fstab."
+else
+  msg red "Erro ao criar backup do /etc/fstab."
+  exit 1
+fi
 if grep -q '/swapfile' /etc/fstab; then
-  echo -e "\e[32mConfiguração de swap já existente no /etc/fstab. Pulando...\e[0m\n"
+  msg green "Swap já configurado no /etc/fstab."
 else
   echo '/swapfile none swap sw 0 0' >> /etc/fstab
-  echo -e "\e[32mConfiguração adicionada ao /etc/fstab.\e[0m\n"
+  msg green "Swap adicionado ao /etc/fstab."
 fi
-sleep 2
 
-echo -e "\e[34mAjustando parâmetros de desempenho do sistema...\e[0m\n"
-sleep 1
-backup_sysctl="/etc/sysctl.conf.backup.$(date +'%Y-%m-%d_%H-%M-%S')"
-cp /etc/sysctl.conf "$backup_sysctl" > /dev/null 2>&1
-echo -e "\e[32mBackup do /etc/sysctl.conf criado em $backup_sysctl.\e[0m\n"
-sleep 1
-
-if grep -q 'vm.swappiness=10' /etc/sysctl.conf; then
-  echo -e "\e[32mAjuste 'vm.swappiness=10' já existe no /etc/sysctl.conf. Pulando...\e[0m\n"
+# Configura parâmetros de desempenho
+msg blue "Ajustando configurações de desempenho..."
+backup_sysctl="/etc/sysctl.conf.backup.$(date +%Y-%m-%d_%H-%M-%S)"
+if cp /etc/sysctl.conf "$backup_sysctl"; then
+  msg green "Backup do /etc/sysctl.conf criado em $backup_sysctl."
 else
-  echo 'vm.swappiness=10' >> /etc/sysctl.conf
-  echo -e "\e[32mAjuste 'vm.swappiness=10' adicionado ao /etc/sysctl.conf.\e[0m\n"
+  msg red "Erro ao criar backup do /etc/sysctl.conf."
+  exit 1
 fi
-sleep 1
 
-if grep -q 'vm.vfs_cache_pressure=50' /etc/sysctl.conf; then
-  echo -e "\e[32mAjuste 'vm.vfs_cache_pressure=50' já existe no /etc/sysctl.conf. Pulando...\e[0m\n"
-else
-  echo 'vm.vfs_cache_pressure=50' >> /etc/sysctl.conf
-  echo -e "\e[32mAjuste 'vm.vfs_cache_pressure=50' adicionado ao /etc/sysctl.conf.\e[0m\n"
-fi
-sleep 2
+for param in "vm.swappiness=10" "vm.vfs_cache_pressure=50"; do
+  if grep -q "^$param" /etc/sysctl.conf; then
+    msg green "Parâmetro $param já configurado."
+  else
+    echo "$param" >> /etc/sysctl.conf
+    msg green "Parâmetro $param adicionado."
+  fi
+done
+sysctl vm.swappiness=10 > /dev/null
+sysctl vm.vfs_cache_pressure=50 > /dev/null
+msg green "Sistema configurado para melhor desempenho."
 
-sysctl vm.swappiness=10 > /dev/null 2>&1
-sysctl vm.vfs_cache_pressure=50 > /dev/null 2>&1
-echo -e "\e[32mSistema ajustado para melhor desempenho com novo arquivo de swap.\e[0m\n"
-sleep 2
-
-read -p "Deseja reiniciar agora? [s/N]: " resposta
-
-if [[ "$resposta" =~ ^[Ss]$ ]]; then
-  echo -e "\e[34mO sistema será reiniciado dentro de $i segundos...\e[0m\n"
-  sleep 2
-  for ((i=15; i>=1; i--)); do
-    echo -e "\e[33mReiniciando o sistena em 15 segundos...\e[0m"
-    sleep 1
-  done
-  echo -e "\n\e[34mReiniciando o sistema agora...\e[0m"
-  reboot
-else
-  echo -e "\e[33mReinício cancelado pelo usuário. Script encerrado.\e[0m\n"
-  sleep 2
-  exit 0
-fi
+# Solicita reinício
+msg blue "Deseja reiniciar agora? [s/N]: "
+read -r resposta
+case $resposta in
+  [Ss]*)
+    msg blue "Reiniciando o sistema em 15 segundos..."
+    for ((i=15; i>=1; i--)); do
+      echo -ne "\rReiniciando em $i segundos..."
+      sleep 1
+    done
+    msg blue "\nReiniciando agora..."
+    reboot
+    ;;
+  *)
+    msg yellow "Reinício cancelado."
+    exit 0
+    ;;
+esac
