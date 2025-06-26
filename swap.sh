@@ -1,7 +1,5 @@
 #!/bin/bash
-# Version: 1.2.0
-# Script para configuração automática de swap
-# Melhorado com tratamento de erros e validações adicionais
+# Version: 1.3.1
 
 set -euo pipefail  # Falha imediata em caso de erro
 
@@ -9,20 +7,23 @@ set -euo pipefail  # Falha imediata em caso de erro
 GREEN='\e[32m'
 NC='\e[0m'
 
-# Função para exibir o banner
+# Exibir banner sempre que iniciar
 exibir_banner() {
   echo -e "${GREEN}"
-  echo "███████╗██╗    ██╗ █████╗ ██████╗ "
-  echo "██╔════╝██║    ██║██╔══██╗██╔══██╗"
-  echo "███████╗██║ █╗ ██║███████║██████╔╝"
-  echo "╚════██║██║███╗██║██╔══██║██╔═══╝ "
-  echo "███████║╚███╔███╔╝██║  ██║██║     "
-  echo "╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝     "
-  echo "                                  "
+  cat << "EOF"
+███████╗██╗    ██╗ █████╗ ██████╗ 
+██╔════╝██║    ██║██╔══██╗██╔══██╗
+███████╗██║ █╗ ██║███████║██████╔╝
+╚════██║██║███╗██║██╔══██║██╔═══╝ 
+███████║╚███╔███╔╝██║  ██║██║     
+╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝     
+EOF
   echo -e "${NC}"
-  echo -e "${GREEN}Script de configuração de SWAP versão 1.2.0${NC}"
+  echo -e "${GREEN}Script de configuração de SWAP versão 1.3.1${NC}"
   echo -e "${GREEN}Desenvolvido por Paulo Rocha + IA${NC}\n"
 }
+
+exibir_banner
 
 # Função para exibir mensagens com cores
 msg() {
@@ -76,63 +77,53 @@ if ! command -v apt &> /dev/null; then
   error_exit "Este script é compatível apenas com sistemas baseados em Debian/Ubuntu (apt)."
 fi
 
-# Verifica conectividade com a internet (com timeout)
+# Verifica conectividade com a internet
 msg blue "Verificando conectividade com a internet..."
+internet_ok=false
 if timeout 10 ping -c 2 8.8.8.8 >/dev/null 2>&1 || timeout 10 ping -c 2 1.1.1.1 >/dev/null 2>&1; then
+  internet_ok=true
+fi
+
+if [ "$internet_ok" = true ]; then
   msg green "✓ Conexão detectada. Atualizando o sistema..."
-  
-  # Atualização do sistema com melhor tratamento de erros
-  if ! apt update >/dev/null 2>&1; then
-    msg yellow "⚠ Aviso: Falha ao atualizar a lista de pacotes. Continuando..."
-  elif ! apt upgrade -y >/dev/null 2>&1; then
-    msg yellow "⚠ Aviso: Falha ao atualizar pacotes. Continuando..."
-  else
-    msg green "✓ Sistema atualizado com sucesso."
-    apt autoremove -y >/dev/null 2>&1 || true
-    apt autoclean -y >/dev/null 2>&1 || true
-  fi
+  apt update >/dev/null 2>&1 || msg yellow "⚠ Aviso: Falha ao atualizar a lista de pacotes."
+  apt upgrade -y >/dev/null 2>&1 || msg yellow "⚠ Aviso: Falha ao atualizar pacotes."
+  apt autoremove -y >/dev/null 2>&1 || true
+  apt autoclean -y >/dev/null 2>&1 || true
+  msg green "✓ Sistema atualizado com sucesso."
 else
   msg yellow "⚠ Sem conexão com a internet. Pulando atualização."
 fi
 
-# Detecta quantidade de RAM com validação
+# Detecta quantidade de RAM
 msg blue "Detectando quantidade de RAM..."
 if [[ ! -r /proc/meminfo ]]; then
   error_exit "Não foi possível ler informações de memória."
 fi
 
 total_ram_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-if [[ ! "$total_ram_kb" =~ ^[0-9]+$ ]] || [[ $total_ram_kb -eq 0 ]]; then
+if [[ -z "$total_ram_kb" || ! "$total_ram_kb" =~ ^[0-9]+$ ]]; then
   error_exit "Não foi possível detectar a quantidade de RAM."
 fi
 
 total_ram_mb=$((total_ram_kb / 1024))
 
-# Lógica de dimensionamento de swap mais conservadora
-if [[ $total_ram_mb -le 512 ]]; then
-  swap_size="1G"
-elif [[ $total_ram_mb -le 1024 ]]; then
-  swap_size="2G"
-elif [[ $total_ram_mb -le 2048 ]]; then
-  swap_size="3G"
-elif [[ $total_ram_mb -le 4096 ]]; then
-  swap_size="4G"
-elif [[ $total_ram_mb -le 8192 ]]; then
-  swap_size="6G"
-elif [[ $total_ram_mb -le 16384 ]]; then
-  swap_size="8G"
-else
-  swap_size="16G"  # Máximo mais conservador
+# Define tamanho do swap
+if [[ $total_ram_mb -le 512 ]]; then swap_size="1G"
+elif [[ $total_ram_mb -le 1024 ]]; then swap_size="2G"
+elif [[ $total_ram_mb -le 2048 ]]; then swap_size="3G"
+elif [[ $total_ram_mb -le 4096 ]]; then swap_size="4G"
+elif [[ $total_ram_mb -le 8192 ]]; then swap_size="6G"
+elif [[ $total_ram_mb -le 16384 ]]; then swap_size="8G"
+else swap_size="16G"
 fi
 
-msg green "✓ RAM detectada: ${total_ram_mb}MB. Tamanho do swap proposto: $swap_size."
+msg green "✓ RAM detectada: ${total_ram_mb}MB. Tamanho do swap proposto: ${swap_size}."
 
-# Verifica espaço em disco com margem de segurança
+# Verifica espaço em disco
 msg blue "Verificando espaço em disco..."
 swap_size_bytes=$(( ${swap_size%G} * 1024 * 1024 * 1024 ))
 available_space_bytes=$(df --block-size=1 / | awk 'NR==2 {print $4}')
-
-# Margem de segurança de 20% + 1GB extra
 required_space=$((swap_size_bytes + swap_size_bytes / 5 + 1024 * 1024 * 1024))
 
 if [[ $available_space_bytes -lt $required_space ]]; then
@@ -140,7 +131,7 @@ if [[ $available_space_bytes -lt $required_space ]]; then
   required_gb=$((required_space / 1024 / 1024 / 1024))
   error_exit "Espaço insuficiente. Disponível: ${available_gb}GB, Necessário: ${required_gb}GB"
 fi
-msg green "✓ Espaço suficiente detectado."
+msg green "✓ Espaço em disco suficiente."
 
 # Desativa outras partições swap do tipo partition
 msg blue "Verificando partições de swap ativas..."
