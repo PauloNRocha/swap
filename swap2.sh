@@ -1,9 +1,11 @@
 #!/bin/bash
-# Version: 1.2.0
 # Script para configuração automática de swap
 # Melhorado com tratamento de erros e validações adicionais
 
 set -euo pipefail  # Falha imediata em caso de erro
+
+# Versão do script (atualizada)
+SCRIPT_VERSION="1.3.0"
 
 # Definir cores
 GREEN='\e[32m'
@@ -20,7 +22,7 @@ exibir_banner() {
   echo "╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝     "
   echo "                                  "
   echo -e "${NC}"
-  echo -e "${GREEN}Script de configuração de SWAP versão 1.2.0${NC}"
+  echo -e "${GREEN}Script de configuração de SWAP versão ${SCRIPT_VERSION}${NC}"
   echo -e "${GREEN}Desenvolvido por Paulo Rocha + IA${NC}\n"
 }
 
@@ -37,7 +39,43 @@ msg() {
   esac
 }
 
-# Função para tratamento de erros
+# Função para exibir o menu principal
+exibir_menu() {
+  echo ""
+  msg blue "O que você deseja?"
+  echo ""
+  msg yellow "1 - Atualizar sistema e configurar swap"
+  msg yellow "2 - Configurar Swap"
+  msg yellow "3 - Atualizar Sistema Operacional"
+  msg yellow "4 - Sair"
+  echo ""
+  msg blue "Digite sua opção [1-4]: "
+  read -r opcao
+  echo ""
+  
+  case $opcao in
+    1)
+      msg green "✓ Opção selecionada: Atualizar sistema e configurar swap"
+      return 1
+      ;;
+    2)
+      msg green "✓ Opção selecionada: Configurar Swap"
+      return 2
+      ;;
+    3)
+      msg green "✓ Opção selecionada: Atualizar Sistema Operacional"
+      return 3
+      ;;
+    4)
+      msg yellow "Saindo do script..."
+      exit 0
+      ;;
+    *)
+      msg red "Opção inválida! Por favor, escolha uma opção entre 1 e 4."
+      exibir_menu
+      ;;
+  esac
+}
 error_exit() {
   msg red "ERRO: $1"
   exit 1
@@ -48,7 +86,33 @@ check_command() {
   command -v "$1" >/dev/null 2>&1 || error_exit "Comando '$1' não encontrado"
 }
 
-# Função para validar entrada do usuário
+# Função para atualizar o sistema
+atualizar_sistema() {
+  # Verifica se é root para atualização
+  if [[ $EUID -ne 0 ]]; then
+    msg red "Para atualizar o sistema é necessário executar como root (use sudo)."
+    return 1
+  fi
+  
+  msg blue "Verificando conectividade com a internet..."
+  if timeout 10 ping -c 2 8.8.8.8 >/dev/null 2>&1 || timeout 10 ping -c 2 1.1.1.1 >/dev/null 2>&1; then
+    msg green "✓ Conexão detectada. Atualizando o sistema..."
+    
+    # Atualização do sistema com melhor tratamento de erros
+    if ! apt update >/dev/null 2>&1; then
+      msg yellow "⚠ Aviso: Falha ao atualizar a lista de pacotes. Continuando..."
+    elif ! apt upgrade -y >/dev/null 2>&1; then
+      msg yellow "⚠ Aviso: Falha ao atualizar pacotes. Continuando..."
+    else
+      msg green "✓ Sistema atualizado com sucesso."
+      apt autoremove -y >/dev/null 2>&1 || true
+      apt autoclean -y >/dev/null 2>&1 || true
+    fi
+  else
+    msg yellow "⚠ Sem conexão com a internet. Não foi possível atualizar o sistema."
+    return 1
+  fi
+}
 validate_input() {
   local input="$1"
   if [[ ! "$input" =~ ^[SsNn]?$ ]]; then
@@ -58,42 +122,67 @@ validate_input() {
   return 0
 }
 
-# Verifica se é executado como root
-if [[ $EUID -ne 0 ]]; then
-  error_exit "Este script deve ser executado como root (use sudo)."
-fi
-msg green "✓ Verificação de privilégios administrativos bem-sucedida!"
+# Exibe o banner
+exibir_banner
 
-# Verifica comandos necessários
-msg blue "Verificando dependências..."
-for cmd in apt ping grep awk df fallocate mkswap swapon swapoff; do
-  check_command "$cmd"
-done
-msg green "✓ Todas as dependências estão disponíveis."
+# Exibe o menu e captura a opção
+exibir_menu
+opcao_escolhida=$?
 
-# Verifica se o sistema usa apt
-if ! command -v apt &> /dev/null; then
-  error_exit "Este script é compatível apenas com sistemas baseados em Debian/Ubuntu (apt)."
-fi
+# Executa verificações apenas quando necessário
+case $opcao_escolhida in
+  1|2)
+    # Para swap, precisa ser root obrigatoriamente
+    if [[ $EUID -ne 0 ]]; then
+      error_exit "Este script deve ser executado como root (use sudo)."
+    fi
+    msg green "✓ Verificação de privilégios administrativos bem-sucedida!"
 
-# Verifica conectividade com a internet (com timeout)
-msg blue "Verificando conectividade com a internet..."
-if timeout 10 ping -c 2 8.8.8.8 >/dev/null 2>&1 || timeout 10 ping -c 2 1.1.1.1 >/dev/null 2>&1; then
-  msg green "✓ Conexão detectada. Atualizando o sistema..."
-  
-  # Atualização do sistema com melhor tratamento de erros
-  if ! apt update >/dev/null 2>&1; then
-    msg yellow "⚠ Aviso: Falha ao atualizar a lista de pacotes. Continuando..."
-  elif ! apt upgrade -y >/dev/null 2>&1; then
-    msg yellow "⚠ Aviso: Falha ao atualizar pacotes. Continuando..."
-  else
-    msg green "✓ Sistema atualizado com sucesso."
-    apt autoremove -y >/dev/null 2>&1 || true
-    apt autoclean -y >/dev/null 2>&1 || true
-  fi
-else
-  msg yellow "⚠ Sem conexão com a internet. Pulando atualização."
-fi
+    # Verifica comandos necessários
+    msg blue "Verificando dependências..."
+    for cmd in apt ping grep awk df fallocate mkswap swapon swapoff; do
+      check_command "$cmd"
+    done
+    msg green "✓ Todas as dependências estão disponíveis."
+
+    # Verifica se o sistema usa apt
+    if ! command -v apt &> /dev/null; then
+      error_exit "Este script é compatível apenas com sistemas baseados em Debian/Ubuntu (apt)."
+    fi
+    ;;
+  3)
+    # Para atualização, verifica comandos básicos
+    msg blue "Verificando dependências..."
+    for cmd in apt ping; do
+      check_command "$cmd"
+    done
+    msg green "✓ Dependências básicas disponíveis."
+
+    # Verifica se o sistema usa apt
+    if ! command -v apt &> /dev/null; then
+      error_exit "Este script é compatível apenas com sistemas baseados em Debian/Ubuntu (apt)."
+    fi
+    ;;
+esac
+
+# Executa a ação baseada na opção escolhida
+case $opcao_escolhida in
+  1)
+    # Opção 1: Atualizar sistema e configurar swap
+    atualizar_sistema
+    # Continua para configurar swap (não precisa return/exit aqui)
+    ;;
+  2)
+    # Opção 2: Apenas configurar swap
+    msg blue "Pulando atualização do sistema..."
+    ;;
+  3)
+    # Opção 3: Apenas atualizar sistema
+    atualizar_sistema
+    msg green "✓ Atualização do sistema concluída!"
+    exit 0
+    ;;
+esac
 
 # Detecta quantidade de RAM com validação
 msg blue "Detectando quantidade de RAM..."
