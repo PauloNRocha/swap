@@ -8,7 +8,7 @@ GREEN='\e[32m'
 NC='\e[0m'
 
 # Extrai a versão do próprio script
-SCRIPT_VERSION=1.4.0
+SCRIPT_VERSION=1.4.1
 
 # Exibir banner sempre que iniciar
 exibir_banner() {
@@ -112,24 +112,6 @@ msg green "✓ Todas as dependências estão disponíveis."
 # Verifica se o sistema usa apt
 if ! command -v apt &> /dev/null; then
   error_exit "Este script é compatível apenas com sistemas baseados em Debian/Ubuntu (apt)."
-fi
-
-# Verifica conectividade com a internet
-msg blue "Verificando conectividade com a internet..."
-internet_ok=false
-if timeout 10 ping -c 2 8.8.8.8 >/dev/null 2>&1 || timeout 10 ping -c 2 1.1.1.1 >/dev/null 2>&1; then
-  internet_ok=true
-fi
-
-if [ "$internet_ok" = true ]; then
-  msg green "✓ Conexão detectada. Atualizando o sistema..."
-  apt update >/dev/null 2>&1 || msg yellow "⚠ Aviso: Falha ao atualizar a lista de pacotes."
-  apt upgrade -y >/dev/null 2>&1 || msg yellow "⚠ Aviso: Falha ao atualizar pacotes."
-  apt autoremove -y >/dev/null 2>&1 || true
-  apt autoclean -y >/dev/null 2>&1 || true
-  msg green "✓ Sistema atualizado com sucesso."
-else
-  msg yellow "⚠ Sem conexão com a internet. Pulando atualização."
 fi
 
 # Detecta quantidade de RAM

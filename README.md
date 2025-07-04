@@ -1,91 +1,88 @@
-# Script para configurar automáticamente o Swap no Linux
+# Script para Configuração Automática de SWAP no Linux
 
+📄 ## Descrição
 
-📄 Descrição
+Este script foi projetado para automatizar a configuração e criação da memória SWAP em sistemas Linux baseados em Debian/Ubuntu. Ele detecta a memória RAM disponível, define um tamanho de SWAP ideal, verifica o espaço em disco e ajusta parâmetros de desempenho do sistema para otimizar o uso da memória.
 
-Este script foi projetado para automatizar a configuração/criação da memória swap em sistemas Linux. Ele detecta a memória RAM disponível, define o tamanho ideal de swap, verifica o espaço disponível em disco, e ajusta parâmetros de desempenho do sistema.
+O script realiza backups automáticos de arquivos críticos antes de qualquer alteração, garantindo a segurança das operações. Ele também é capaz de desativar partições de SWAP antigas e gerenciar o arquivo `/swapfile` de forma inteligente.
 
-Além disso, o script realiza backups automáticos de arquivos críticos antes de qualquer alteração, garantindo segurança nas operações. A partir da versão 1.1.4, também detecta e desativa partições de swap antigas, removendo suas entradas do /etc/fstab.
+---
 
+⚙️ ## Recursos Principais
 
+-   **Configuração Inteligente:** Detecta a RAM e ajusta o tamanho do SWAP de acordo com as boas práticas.
+-   **Flexibilidade:** Permite definir um tamanho de SWAP personalizado com a flag `--size`.
+-   **Verificação de Espaço:** Garante que há espaço em disco suficiente antes de criar o arquivo de SWAP.
+-   **Gerenciamento de SWAP Antigo:** Desativa partições de SWAP existentes e remove suas entradas do `/etc/fstab`.
+-   **Otimização de Performance:** Ajusta `vm.swappiness` e `vm.vfs_cache_pressure` para um uso mais eficiente da memória.
+-   **Segurança:** Cria backups automáticos de `/etc/fstab` e `/etc/sysctl.conf` antes de modificá-los.
+-   **Robustez:** Utiliza `dd` como alternativa caso `fallocate` não seja suportado pelo sistema de arquivos.
+-   **Interativo:** Solicita confirmação antes de reiniciar o sistema.
 
-⚙️ Recursos
+---
 
-  ✅ Verifica conectividade com a internet antes de atualizar o sistema.
-  
-  🔄 Atualiza pacotes e realiza limpeza automática do sistema.
-  
-  🧠 Detecta a quantidade de RAM e ajusta dinamicamente o tamanho ideal do swap.
-  
-  💾 Verifica espaço em disco antes de criar ou recriar o arquivo de swap.
-  
-  🧹 Desativa partições de swap criadas na instalação e remove entradas antigas do /etc/fstab.
-  
-  🛡️ Cria ou recria arquivos de swap conforme necessário.
-  
-  📦 Realiza backups automáticos dos arquivos:
-  
-   - /etc/fstab
-  
-   - /etc/sysctl.conf
-  
-  ⚙️ Adiciona configurações de desempenho no sistema:
-   
-  - vm.swappiness=10 – Reduz o uso excessivo de swap.
+🛠️ ## Pré-requisitos
 
-  - vm.vfs_cache_pressure=50 – Melhora o balanceamento entre cache e arquivos.
+-   Sistema operacional baseado em **Debian** ou **Ubuntu**.
+-   Acesso **root** ou permissões de superusuário (`sudo`).
+-   Espaço em disco suficiente para a criação do arquivo de SWAP.
 
-  ⏲️ Contagem regressiva interativa antes de reiniciar o sistema.
+---
 
+📥 ## Como Usar
 
+1.  **Clone o repositório ou baixe o script:**
+    ```bash
+    git clone https://github.com/seu-usuario/swap.git
+    cd swap
+    ```
 
-🛠️ Pré-requisitos
-
- -  Sistema operacional baseado em Linux (Debian/Ubuntu).
- -  Acesso root ou permissões administrativas.
- -  Espaço disponível suficiente para criação do arquivo de swap.
-
-
-
-📥 Como Usar
-
-1. Baixe o script ou clone o repositorio
-2. Para rodar o script você pode conceder permissão de execução:
-
-   ```bash
+2.  **Conceda permissão de execução ao script:**
+    ```bash
     chmod +x swap.sh
+    ```
 
-3. Execute com permissões de root:
+3.  **Execute com permissões de root:**
 
-   ```Bash
-   sudo ./swap.sh
-   
-Durante a execução, o script informará todas as ações realizadas e alertará em caso de problemas (como falta de espaço em disco).
+    *   **Para configuração automática:**
+        ```bash
+        sudo ./swap.sh
+        ```
 
+    *   **Para definir um tamanho de SWAP específico (ex: 8GB):**
+        ```bash
+        sudo ./swap.sh --size 8G
+        ```
 
+    *   **Para ver as opções de ajuda:**
+        ```bash
+        sudo ./swap.sh --help
+        ```
 
-📂 Backups Gerados
+---
 
-  - /etc/fstab: Backup no formato /etc/fstab.backup.<data+hora>.
-  - /etc/sysctl.conf: Backup no formato /etc/sysctl.conf.backup.<data+hora>.
+📂 ## Backups Gerados
 
-Esses backups garantem que você possa restaurar os arquivos originais em caso de necessidade.
+-   `/etc/fstab` é salvo como `/etc/fstab.backup.<data+hora>`.
+-   `/etc/sysctl.conf` é salvo como `/etc/sysctl.conf.backup.<data+hora>`.
 
+Esses backups garantem que você possa restaurar as configurações originais em caso de necessidade.
 
+---
 
-⚠️ Avisos
+⚠️ ## Avisos Importantes
 
-   💽 Espaço em disco: o script checa antes de criar o swap. Caso não haja espaço suficiente, a operação será abortada.
-   🔁 Reinicialização: algumas configurações exigem reinício. O script oferece contagem regressiva e opção para cancelar.
+-   **Ambiente de Teste:** É altamente recomendável executar este script em um ambiente de teste (como uma Máquina Virtual) antes de aplicá-lo em um sistema de produção.
+-   **Reinicialização:** Algumas configurações exigem a reinicialização do sistema para serem totalmente aplicadas. O script oferecerá essa opção ao final da execução.
 
+---
 
+🛡️ ## Licença
 
-🛡️ Licença
+Este projeto está licenciado sob a [MIT License](LICENSE), permitindo uso, modificação e distribuição livre.
 
-Este projeto está licenciado sob a licença MIT License, permitindo uso, modificação e distribuição livre, desde que sejam mantidos os créditos ao autor.
+---
 
+🤝 ## Contribuição
 
-
-🤝 Contribuição
-
-Contribuições são bem-vindas! Sinta-se à vontade para abrir issues ou enviar pull requests com melhorias e sugestões.
+Contribuições são muito bem-vindas! Sinta-se à vontade para abrir *issues* ou enviar *pull requests* com melhorias, correções e sugestões.
