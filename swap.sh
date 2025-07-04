@@ -1,5 +1,5 @@
 #!/bin/bash
-# Version: 1.3.1
+
 
 set -euo pipefail  # Falha imediata em caso de erro
 
@@ -7,23 +7,53 @@ set -euo pipefail  # Falha imediata em caso de erro
 GREEN='\e[32m'
 NC='\e[0m'
 
+# Extrai a versão do próprio script
+SCRIPT_VERSION=1.4.0
+
 # Exibir banner sempre que iniciar
 exibir_banner() {
   echo -e "${GREEN}"
   cat << "EOF"
-███████╗██╗    ██╗ █████╗ ██████╗ 
+███████╗██╗    ██╗ █████╗ ██████╗
 ██╔════╝██║    ██║██╔══██╗██╔══██╗
 ███████╗██║ █╗ ██║███████║██████╔╝
-╚════██║██║███╗██║██╔══██║██╔═══╝ 
-███████║╚███╔███╔╝██║  ██║██║     
-╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝     
+╚════██║██║███╗██║██╔══██║██╔═══╝
+███████║╚███╔███╔╝██║  ██║██║
+╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝
 EOF
   echo -e "${NC}"
-  echo -e "${GREEN}Script de configuração de SWAP versão 1.3.1${NC}"
+  echo -e "${GREEN}Script de configuração de SWAP versão ${SCRIPT_VERSION}${NC}"
   echo -e "${GREEN}Desenvolvido por Paulo Rocha + IA${NC}\n"
 }
 
 exibir_banner
+
+# Função para exibir o menu de ajuda
+exibir_ajuda() {
+  echo "Uso: $0 [opções]"
+  echo "Opções:"
+  echo "  --size <tamanho>  Define o tamanho do swap (ex: 2G, 4G, 8G)"
+  echo "  --help            Exibe este menu de ajuda"
+  exit 0
+}
+
+# Processa argumentos da linha de comando
+custom_swap_size=""
+while [[ $# -gt 0 ]]; do
+  key="$1"
+  case $key in
+    --size)
+      custom_swap_size="$2"
+      shift 2
+      ;;
+    --help)
+      exibir_ajuda
+      ;;
+    *)
+      error_exit "Opção inválida: $1"
+      ;;
+  esac
+done
 
 # Função para exibir mensagens com cores
 msg() {
@@ -41,23 +71,30 @@ msg() {
 # Função para tratamento de erros
 error_exit() {
   msg red "ERRO: $1"
+  cleanup # Chama a função de limpeza antes de sair
   exit 1
 }
+
+# Função de limpeza para reverter alterações
+cleanup() {
+  msg yellow "Executando limpeza..."
+  # Adicione aqui comandos para reverter alterações, se necessário
+  # Ex: remover arquivo de swap incompleto
+  if [[ -n "${swap_file_incomplete-}" && -f "$swap_file_incomplete" ]]; then
+    rm -f "$swap_file_incomplete"
+    msg yellow "Arquivo de swap incompleto removido."
+  fi
+}
+
+# Trap para chamar a função de limpeza em caso de erro ou interrupção
+trap 'cleanup' EXIT
 
 # Função para validar se um comando existe
 check_command() {
   command -v "$1" >/dev/null 2>&1 || error_exit "Comando '$1' não encontrado"
 }
 
-# Função para validar entrada do usuário
-validate_input() {
-  local input="$1"
-  if [[ ! "$input" =~ ^[SsNn]?$ ]]; then
-    msg yellow "Entrada inválida. Use 's' para Sim ou 'n' para Não."
-    return 1
-  fi
-  return 0
-}
+
 
 # Verifica se é executado como root
 if [[ $EUID -ne 0 ]]; then
@@ -109,16 +146,20 @@ fi
 total_ram_mb=$((total_ram_kb / 1024))
 
 # Define tamanho do swap
-if [[ $total_ram_mb -le 512 ]]; then swap_size="1G"
-elif [[ $total_ram_mb -le 1024 ]]; then swap_size="2G"
-elif [[ $total_ram_mb -le 2048 ]]; then swap_size="3G"
-elif [[ $total_ram_mb -le 4096 ]]; then swap_size="4G"
-elif [[ $total_ram_mb -le 8192 ]]; then swap_size="6G"
-elif [[ $total_ram_mb -le 16384 ]]; then swap_size="8G"
-else swap_size="16G"
+if [[ -n "$custom_swap_size" ]]; then
+  swap_size="$custom_swap_size"
+  msg blue "Tamanho do swap definido pelo usuário: $swap_size"
+else
+  if [[ $total_ram_mb -le 512 ]]; then swap_size="1G"
+  elif [[ $total_ram_mb -le 1024 ]]; then swap_size="2G"
+  elif [[ $total_ram_mb -le 2048 ]]; then swap_size="3G"
+  elif [[ $total_ram_mb -le 4096 ]]; then swap_size="4G"
+  elif [[ $total_ram_mb -le 8192 ]]; then swap_size="6G"
+  elif [[ $total_ram_mb -le 16384 ]]; then swap_size="8G"
+  else swap_size="16G"
+  fi
+  msg green "✓ RAM detectada: ${total_ram_mb}MB. Tamanho do swap proposto: ${swap_size}."
 fi
-
-msg green "✓ RAM detectada: ${total_ram_mb}MB. Tamanho do swap proposto: ${swap_size}."
 
 # Verifica espaço em disco
 msg blue "Verificando espaço em disco..."
@@ -133,29 +174,41 @@ if [[ $available_space_bytes -lt $required_space ]]; then
 fi
 msg green "✓ Espaço em disco suficiente."
 
+# Função para criar backup de um arquivo
+backup_file() {
+  local file_path="$1"
+  if [[ -f "$file_path" ]]; then
+    local backup_path="${file_path}.backup.$(date +%Y%m%d_%H%M%S)"
+    if cp "$file_path" "$backup_path"; then
+      msg green "✓ Backup de $file_path criado em $backup_path"
+      return 0
+    else
+      error_exit "Falha ao criar backup de $file_path"
+    fi
+  fi
+  return 1
+}
+
 # Desativa outras partições swap do tipo partition
 msg blue "Verificando partições de swap ativas..."
 if swapon --show=NAME,TYPE --noheadings 2>/dev/null | grep -q "partition"; then
   msg yellow "Desativando partições de swap ativas..."
-  
-  # Criar backup do fstab antes de modificar
-  backup_fstab="/etc/fstab.backup.$(date +%Y%m%d_%H%M%S)"
-  cp /etc/fstab "$backup_fstab" || error_exit "Falha ao criar backup do fstab"
-  msg green "✓ Backup do fstab criado: $backup_fstab"
-  
+
+  backup_file "/etc/fstab"
+
   while IFS= read -r line; do
     dev=$(echo "$line" | awk '$2 == "partition" { print $1 }')
     if [[ -n "$dev" && "$dev" != "/swapfile" ]]; then
       if swapoff "$dev" 2>/dev/null; then
         msg yellow "✓ Swap desativado: $dev"
-        
+
         # Remove entradas do fstab com mais cuidado
         uuid=$(blkid -s UUID -o value "$dev" 2>/dev/null || true)
         if [[ -n "$uuid" ]]; then
           sed -i "/UUID=$uuid.*swap/d" /etc/fstab
           msg yellow "✓ Entrada UUID removida do fstab"
         fi
-        
+
         device_name=$(basename "$dev")
         sed -i "/${device_name}.*swap/d" /etc/fstab
         msg yellow "✓ Entrada do dispositivo removida do fstab"
@@ -168,6 +221,31 @@ else
   msg green "✓ Nenhuma partição de swap ativa encontrada."
 fi
 
+# Função para criar o arquivo de swap
+create_swap_file() {
+  local size="$1"
+  local file_path="$2"
+
+  # Tenta usar fallocate primeiro
+  if fallocate -l "$size" "$file_path" >/dev/null 2>&1; then
+    msg green "✓ Arquivo de swap criado com fallocate."
+  else
+    msg yellow "fallocate não suportado ou falhou. Usando dd como alternativa (pode ser mais lento)..."
+    # Converte o tamanho para MB para o dd
+    local size_mb=${size%G}
+    size_mb=$((size_mb * 1024))
+    if dd if=/dev/zero of="$file_path" bs=1M count="$size_mb" status=progress >/dev/null 2>&1; then
+      msg green "✓ Arquivo de swap criado com dd."
+    else
+      error_exit "Falha ao criar arquivo de swap com dd"
+    fi
+  fi
+
+  chmod 600 "$file_path"
+  mkswap "$file_path" >/dev/null 2>&1
+  swapon "$file_path"
+}
+
 # Gerencia arquivo de swap
 msg blue "Verificando arquivo de swap existente..."
 current_swap_info=$(swapon --show --bytes 2>/dev/null | grep '/swapfile' || true)
@@ -175,16 +253,13 @@ current_swap_info=$(swapon --show --bytes 2>/dev/null | grep '/swapfile' || true
 if [[ -n "$current_swap_info" ]]; then
   current_swap_size=$(echo "$current_swap_info" | awk '{print $3}')
   current_swap_gb=$((current_swap_size / 1024 / 1024 / 1024))
-  
+
   if [[ $current_swap_size -lt $swap_size_bytes ]]; then
     msg yellow "Swap existente (${current_swap_gb}GB) é menor que o recomendado. Recriando..."
-    
+
     if swapoff /swapfile && rm -f /swapfile; then
-      if fallocate -l "$swap_size" /swapfile && chmod 600 /swapfile && mkswap /swapfile >/dev/null 2>&1 && swapon /swapfile; then
-        msg green "✓ Arquivo de swap recriado com sucesso."
-      else
-        error_exit "Falha ao criar novo arquivo de swap"
-      fi
+      create_swap_file "$swap_size" "/swapfile"
+      msg green "✓ Arquivo de swap recriado com sucesso."
     else
       error_exit "Falha ao remover swap existente"
     fi
@@ -193,30 +268,22 @@ if [[ -n "$current_swap_info" ]]; then
   fi
 else
   msg blue "Criando novo arquivo de swap..."
-  
+
   # Verifica se já existe arquivo sem estar ativo
   if [[ -f /swapfile ]]; then
     msg yellow "Arquivo /swapfile existe mas não está ativo. Removendo..."
     rm -f /swapfile
   fi
-  
-  if fallocate -l "$swap_size" /swapfile && chmod 600 /swapfile && mkswap /swapfile >/dev/null 2>&1 && swapon /swapfile; then
-    msg green "✓ Arquivo de swap criado e ativado com sucesso."
-  else
-    error_exit "Falha ao criar arquivo de swap"
-  fi
+
+  create_swap_file "$swap_size" "/swapfile"
+  msg green "✓ Arquivo de swap criado e ativado com sucesso."
 fi
 
 # Configura /etc/fstab
 msg blue "Configurando /etc/fstab..."
 if ! grep -q '/swapfile' /etc/fstab; then
-  # Cria backup se ainda não foi criado
-  if [[ ! -f "$backup_fstab" ]]; then
-    backup_fstab="/etc/fstab.backup.$(date +%Y%m%d_%H%M%S)"
-    cp /etc/fstab "$backup_fstab" || error_exit "Falha ao criar backup do fstab"
-    msg green "✓ Backup do fstab criado: $backup_fstab"
-  fi
-  
+  backup_file "/etc/fstab"
+
   echo '/swapfile none swap sw 0 0' >> /etc/fstab
   msg green "✓ Swap adicionado ao /etc/fstab."
 else
@@ -225,17 +292,12 @@ fi
 
 # Configura parâmetros de desempenho
 msg blue "Ajustando configurações de desempenho..."
-backup_sysctl="/etc/sysctl.conf.backup.$(date +%Y%m%d_%H%M%S)"
 
 if [[ ! -f /etc/sysctl.conf ]]; then
   touch /etc/sysctl.conf
 fi
 
-if cp /etc/sysctl.conf "$backup_sysctl"; then
-  msg green "✓ Backup do sysctl.conf criado: $backup_sysctl"
-else
-  error_exit "Falha ao criar backup do sysctl.conf"
-fi
+backup_file "/etc/sysctl.conf"
 
 # Parâmetros de configuração
 declare -A sysctl_params=(
@@ -248,7 +310,7 @@ declare -A sysctl_params=(
 for param in "${!sysctl_params[@]}"; do
   value="${sysctl_params[$param]}"
   param_line="$param=$value"
-  
+
   if grep -q "^$param=" /etc/sysctl.conf; then
     # Atualiza valor existente
     sed -i "s/^$param=.*/$param_line/" /etc/sysctl.conf
@@ -258,7 +320,7 @@ for param in "${!sysctl_params[@]}"; do
     echo "$param_line" >> /etc/sysctl.conf
     msg green "✓ Parâmetro $param=$value adicionado."
   fi
-  
+
   # Aplica imediatamente
   sysctl "$param_line" >/dev/null 2>&1 || msg yellow "⚠ Aviso: Não foi possível aplicar $param_line imediatamente"
 done
@@ -275,31 +337,24 @@ msg blue "================================"
 
 # Solicita reinício com validação de entrada
 while true; do
-  msg blue "Deseja reiniciar o sistema agora para aplicar todas as configurações? [s/N]: "
-  read -r resposta
-  
-  if validate_input "$resposta"; then
-    break
-  fi
-done
-
-case ${resposta,,} in  # Converte para minúscula
-  s|sim|y|yes)
+  read -rp "$(msg blue 'Deseja reiniciar o sistema agora para aplicar todas as configurações? [s/N]: ')" resposta
+  resposta=${resposta,,} # Converte para minúscula
+  if [[ "$resposta" =~ ^(s|sim|y|yes)$ ]]; then
     msg blue "Reiniciando o sistema em 10 segundos..."
     msg yellow "Pressione Ctrl+C para cancelar..."
-    
     for ((i=10; i>=1; i--)); do
       printf "\rReiniciando em %d segundos... " "$i"
       sleep 1
     done
-    
     msg blue "\nReiniciando agora..."
     reboot
-    ;;
-  *)
+    break
+  elif [[ "$resposta" =~ ^(n|nao|no)?$ ]]; then
     msg yellow "Reinício cancelado."
     msg blue "Para aplicar todas as configurações, reinicie o sistema manualmente:"
     msg green "sudo reboot"
-    exit 0
-    ;;
-esac
+    break
+  else
+    msg yellow "Entrada inválida. Use 's' para Sim ou 'n' para Não."
+  fi
+done
