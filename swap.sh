@@ -5,7 +5,7 @@ set -euo pipefail # Falha imediata em caso de erro
 # ==============================================================================
 # CONFIGURAÇÃO E VARIÁVEIS GLOBAIS
 # ==============================================================================
-SCRIPT_VERSION=1.5.0
+SCRIPT_VERSION=1.5.1
 LOG_FILE="/var/log/swap_script.log"
 LOG_ENABLED=false
 
@@ -17,7 +17,7 @@ NC='\e[0m'
 # DEFINIÇÃO DE FUNÇÕES
 # ==============================================================================
 
-# Função para exibir mensagens com cores (usada por log_msg)
+# Função interna para exibir mensagens com cores
 _msg() {
   local color=$1
   shift
@@ -30,7 +30,7 @@ _msg() {
   esac
 }
 
-# Função para registrar mensagens em log e no console
+# Função principal para registrar mensagens no console e em arquivo de log
 log_msg() {
   local color="$1"
   shift
@@ -38,17 +38,32 @@ log_msg() {
   local timestamp
   timestamp=$(date "+%Y-%m-%d %H:%M:%S")
 
-  # Exibe a mensagem no console
   _msg "$color" "$message"
 
-  # Grava a mensagem no arquivo de log
   if [[ "$LOG_ENABLED" = true ]]; then
-    # Remove códigos de cor antes de salvar no log
     local plain_message
     plain_message=$(echo "$message" | sed 's/\x1b\[[0-9;]*m//g')
     echo "[$timestamp] [$color] $plain_message" >>"$LOG_FILE"
   fi
 }
+
+# Função para tratamento de erros (chamada pelo trap)
+error_exit() {
+  log_msg red "ERRO: $1"
+  exit 1
+}
+
+# Função de limpeza para reverter alterações (chamada pelo trap)
+cleanup() {
+  log_msg yellow "Executando limpeza..."
+  if [[ -n "${swap_file_incomplete-}" && -f "$swap_file_incomplete" ]]; then
+    rm -f "$swap_file_incomplete"
+    log_msg yellow "Arquivo de swap incompleto removido."
+  fi
+}
+
+# Trap para chamar a função de limpeza em caso de erro ou interrupção
+trap 'cleanup' EXIT
 
 # Função para converter tamanho (ex: 2G, 512M) para bytes
 parse_size_to_bytes() {
@@ -73,7 +88,7 @@ parse_size_to_bytes() {
   echo "$size_bytes"
 }
 
-# Exibir banner sempre que iniciar
+# Função para exibir o banner inicial
 exibir_banner() {
   echo -e "${GREEN}"
   cat <<EOF
@@ -98,24 +113,6 @@ exibir_ajuda() {
   exit 0
 }
 
-# Função de limpeza para reverter alterações
-cleanup() {
-  log_msg yellow "Executando limpeza..."
-  if [[ -n "${swap_file_incomplete-}" && -f "$swap_file_incomplete" ]]; then
-    rm -f "$swap_file_incomplete"
-    log_msg yellow "Arquivo de swap incompleto removido."
-  fi
-}
-
-# Função para tratamento de erros
-error_exit() {
-  log_msg red "ERRO: $1"
-  exit 1
-}
-
-# Trap para chamar a função de limpeza em caso de erro ou interrupção
-trap 'cleanup' EXIT
-
 # Função para validar se um comando existe
 check_command() {
   command -v "$1" >/dev/null 2>&1 || error_exit "Comando '$1' não encontrado"
@@ -128,12 +125,10 @@ backup_file() {
     local backup_path="${file_path}.backup.$(date +%Y%m%d_%H%M%S)"
     if cp "$file_path" "$backup_path"; then
       log_msg green "✓ Backup de $file_path criado em $backup_path"
-      return 0
     else
       error_exit "Falha ao criar backup de $file_path"
     fi
   fi
-  return 1
 }
 
 # Função para criar o arquivo de swap
@@ -143,7 +138,7 @@ create_swap_file() {
   local size_mb
 
   log_msg blue "Criando arquivo de swap com tamanho $size_str..."
-  swap_file_incomplete="$file_path" # Marca o arquivo para limpeza em caso de falha
+  swap_file_incomplete="$file_path"
 
   if fallocate -l "$size_str" "$file_path" >/dev/null 2>&1; then
     log_msg green "✓ Arquivo de swap criado com fallocate."
@@ -167,7 +162,7 @@ create_swap_file() {
   chmod 600 "$file_path"
   mkswap "$file_path" >/dev/null 2>&1
   swapon "$file_path"
-  swap_file_incomplete="" # Desmarca o arquivo após sucesso
+  swap_file_incomplete=""
 }
 
 # ==============================================================================
@@ -210,7 +205,7 @@ log_msg green "✓ Verificação de privilégios administrativos bem-sucedida!"
 
 # Verifica comandos necessários
 log_msg blue "Verificando dependências..."
-for cmd in apt ping grep awk df fallocate mkswap swapon swapoff; do
+for cmd in apt grep awk df fallocate mkswap swapon swapoff; do
   check_command "$cmd"
 done
 log_msg green "✓ Todas as dependências estão disponíveis."
@@ -224,18 +219,17 @@ fi
 log_msg blue "Detectando quantidade de RAM..."
 if [[ ! -r /proc/meminfo ]]; then
   error_exit "Não foi possível ler informações de memória."
-}
+fi
 
 total_ram_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
 if [[ -z "$total_ram_kb" || ! "$total_ram_kb" =~ ^[0-9]+$ ]]; then
   error_exit "Não foi possível detectar a quantidade de RAM."
-}
+fi
 
 total_ram_mb=$((total_ram_kb / 1024))
 
 # Define tamanho do swap
 if [[ -n "$custom_swap_size" ]]; then
-  # Valida o formato do tamanho antes de usar
   parse_size_to_bytes "$custom_swap_size" >/dev/null
   swap_size="$custom_swap_size"
   log_msg blue "Tamanho do swap definido pelo usuário: $swap_size"
@@ -251,7 +245,6 @@ else
   log_msg green "✓ RAM detectada: ${total_ram_mb}MB. Tamanho do swap proposto: ${swap_size}."
 fi
 
-# Converte o tamanho do swap (string) para bytes (integer)
 swap_size_bytes=$(parse_size_to_bytes "$swap_size")
 
 # Verifica espaço em disco
@@ -270,21 +263,17 @@ log_msg green "✓ Espaço em disco suficiente."
 log_msg blue "Verificando partições de swap ativas..."
 if swapon --show=NAME,TYPE --noheadings 2>/dev/null | grep -q "partition"; then
   log_msg yellow "Desativando partições de swap ativas..."
-
   backup_file "/etc/fstab"
-
   while IFS= read -r line; do
     dev=$(echo "$line" | awk '$2 == "partition" { print $1 }')
     if [[ -n "$dev" && "$dev" != "/swapfile" ]]; then
       if swapoff "$dev" 2>/dev/null; then
         log_msg yellow "✓ Swap desativado: $dev"
-
         uuid=$(blkid -s UUID -o value "$dev" 2>/dev/null || true)
         if [[ -n "$uuid" ]]; then
           sed -i "/UUID=$uuid.*swap/d" /etc/fstab
           log_msg yellow "✓ Entrada UUID removida do fstab"
         fi
-
         device_name=$(basename "$dev")
         sed -i "/${device_name}.*swap/d" /etc/fstab
         log_msg yellow "✓ Entrada do dispositivo removida do fstab"
@@ -304,10 +293,8 @@ current_swap_info=$(swapon --show --bytes 2>/dev/null | grep '/swapfile' || true
 if [[ -n "$current_swap_info" ]]; then
   current_swap_size=$(echo "$current_swap_info" | awk '{print $3}')
   current_swap_gb=$((current_swap_size / 1024 / 1024 / 1024))
-
   if [[ $current_swap_size -lt $swap_size_bytes ]]; then
     log_msg yellow "Swap existente (${current_swap_gb}GB) é menor que o recomendado. Recriando..."
-
     if swapoff /swapfile && rm -f /swapfile; then
       create_swap_file "$swap_size" "/swapfile"
       log_msg green "✓ Arquivo de swap recriado com sucesso."
@@ -319,12 +306,10 @@ if [[ -n "$current_swap_info" ]]; then
   fi
 else
   log_msg blue "Criando novo arquivo de swap..."
-
   if [[ -f /swapfile ]]; then
     log_msg yellow "Arquivo /swapfile existe mas não está ativo. Removendo..."
     rm -f /swapfile
   fi
-
   create_swap_file "$swap_size" "/swapfile"
   log_msg green "✓ Arquivo de swap criado e ativado com sucesso."
 fi
@@ -333,7 +318,6 @@ fi
 log_msg blue "Configurando /etc/fstab..."
 if ! grep -q '/swapfile' /etc/fstab; then
   backup_file "/etc/fstab"
-
   echo '/swapfile none swap sw 0 0' >>/etc/fstab
   log_msg green "✓ Swap adicionado ao /etc/fstab."
 else
@@ -342,24 +326,19 @@ fi
 
 # Configura parâmetros de desempenho
 log_msg blue "Ajustando configurações de desempenho..."
-
 if [[ ! -f /etc/sysctl.conf ]]; then
   touch /etc/sysctl.conf
 fi
-
 backup_file "/etc/sysctl.conf"
-
 declare -A sysctl_params=(
   ["vm.swappiness"]="10"
   ["vm.vfs_cache_pressure"]="50"
   ["vm.dirty_ratio"]="15"
   ["vm.dirty_background_ratio"]="5"
 )
-
 for param in "${!sysctl_params[@]}"; do
   value="${sysctl_params[$param]}"
   param_line="$param=$value"
-
   if grep -q "^$param=" /etc/sysctl.conf; then
     sed -i "s/^$param=.*/$param_line/" /etc/sysctl.conf
     log_msg green "✓ Parâmetro $param atualizado para $value."
@@ -367,10 +346,8 @@ for param in "${!sysctl_params[@]}"; do
     echo "$param_line" >>/etc/sysctl.conf
     log_msg green "✓ Parâmetro $param=$value adicionado."
   fi
-
   sysctl "$param_line" >/dev/null 2>&1 || log_msg yellow "⚠ Aviso: Não foi possível aplicar $param_line imediatamente"
 done
-
 log_msg green "✓ Sistema configurado para melhor desempenho."
 
 # Exibe resumo da configuração
@@ -384,7 +361,7 @@ log_msg blue "================================"
 # Solicita reinício com validação de entrada
 while true; do
   read -rp "$(_msg blue 'Deseja reiniciar o sistema agora para aplicar todas as configurações? [s/N]: ')" resposta
-  resposta=${resposta,,} # Converte para minúscula
+  resposta=${resposta,,}
   if [[ "$resposta" =~ ^(s|sim|y|yes)$ ]]; then
     log_msg blue "Reiniciando o sistema em 10 segundos..."
     log_msg yellow "Pressione Ctrl+C para cancelar..."
