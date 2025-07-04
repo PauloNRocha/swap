@@ -8,7 +8,7 @@ GREEN='\e[32m'
 NC='\e[0m'
 
 # Extrai a versão do próprio script
-SCRIPT_VERSION=1.4.1
+SCRIPT_VERSION=1.4.2
 
 # Exibir banner sempre que iniciar
 exibir_banner() {
@@ -28,6 +28,10 @@ EOF
 
 exibir_banner
 
+# ==============================================================================
+# DEFINIÇÃO DE FUNÇÕES
+# ==============================================================================
+
 # Função para exibir o menu de ajuda
 exibir_ajuda() {
   echo "Uso: $0 [opções]"
@@ -36,24 +40,6 @@ exibir_ajuda() {
   echo "  --help            Exibe este menu de ajuda"
   exit 0
 }
-
-# Processa argumentos da linha de comando
-custom_swap_size=""
-while [[ $# -gt 0 ]]; do
-  key="$1"
-  case $key in
-    --size)
-      custom_swap_size="$2"
-      shift 2
-      ;;
-    --help)
-      exibir_ajuda
-      ;;
-    *)
-      error_exit "Opção inválida: $1"
-      ;;
-  esac
-done
 
 # Função para exibir mensagens com cores
 msg() {
@@ -68,13 +54,6 @@ msg() {
   esac
 }
 
-# Função para tratamento de erros
-error_exit() {
-  msg red "ERRO: $1"
-  cleanup # Chama a função de limpeza antes de sair
-  exit 1
-}
-
 # Função de limpeza para reverter alterações
 cleanup() {
   msg yellow "Executando limpeza..."
@@ -86,6 +65,13 @@ cleanup() {
   fi
 }
 
+# Função para tratamento de erros
+error_exit() {
+  msg red "ERRO: $1"
+  cleanup # Chama a função de limpeza antes de sair
+  exit 1
+}
+
 # Trap para chamar a função de limpeza em caso de erro ou interrupção
 trap 'cleanup' EXIT
 
@@ -93,6 +79,69 @@ trap 'cleanup' EXIT
 check_command() {
   command -v "$1" >/dev/null 2>&1 || error_exit "Comando '$1' não encontrado"
 }
+
+# Função para criar backup de um arquivo
+backup_file() {
+  local file_path="$1"
+  if [[ -f "$file_path" ]]; then
+    local backup_path="${file_path}.backup.$(date +%Y%m%d_%H%M%S)"
+    if cp "$file_path" "$backup_path"; then
+      msg green "✓ Backup de $file_path criado em $backup_path"
+      return 0
+    else
+      error_exit "Falha ao criar backup de $file_path"
+    fi
+  fi
+  return 1
+}
+
+# Função para criar o arquivo de swap
+create_swap_file() {
+  local size="$1"
+  local file_path="$2"
+
+  # Tenta usar fallocate primeiro
+  if fallocate -l "$size" "$file_path" >/dev/null 2>&1; then
+    msg green "✓ Arquivo de swap criado com fallocate."
+  else
+    msg yellow "fallocate não suportado ou falhou. Usando dd como alternativa (pode ser mais lento)..."
+    # Converte o tamanho para MB para o dd
+    local size_mb=${size%G}
+    size_mb=$((size_mb * 1024))
+    if dd if=/dev/zero of="$file_path" bs=1M count="$size_mb" status=progress >/dev/null 2>&1; then
+      msg green "✓ Arquivo de swap criado com dd."
+    else
+      error_exit "Falha ao criar arquivo de swap com dd"
+    fi
+  fi
+
+  chmod 600 "$file_path"
+  mkswap "$file_path" >/dev/null 2>&1
+  swapon "$file_path"
+}
+
+
+# ==============================================================================
+# PROCESSAMENTO DE ARGUMENTOS E LÓGICA PRINCIPAL
+# ==============================================================================
+
+# Processa argumentos da linha de comando
+custom_swap_size=""
+while [[ $# -gt 0 ]]; do
+  key="$1"
+  case $key in
+    --size)
+      custom_swap_size="$2"
+      shift 2
+      ;;
+    --help)
+      exibir_ajuda
+      ;;
+    *)
+      error_exit "Opção inválida: $1. Use --help para ver as opções."
+      ;;
+  esac
+done
 
 
 
