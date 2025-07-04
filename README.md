@@ -4,14 +4,15 @@
 
 Este script foi projetado para automatizar a configuração e criação da memória SWAP em sistemas Linux baseados em Debian/Ubuntu. Ele detecta a memória RAM disponível, define um tamanho de SWAP ideal, verifica o espaço em disco e ajusta parâmetros de desempenho do sistema para otimizar o uso da memória.
 
-O script realiza backups automáticos de arquivos críticos antes de qualquer alteração, garantindo a segurança das operações. Ele também é capaz de desativar partições de SWAP antigas e gerenciar o arquivo `/swapfile` de forma inteligente.
+O script realiza backups automáticos de arquivos críticos, gera um log detalhado das operações e é capaz de desativar partições de SWAP antigas, gerenciando o arquivo `/swapfile` de forma inteligente e segura.
 
 ---
 
 ⚙️ ## Recursos Principais
 
 -   **Configuração Inteligente:** Detecta a RAM e ajusta o tamanho do SWAP de acordo com as boas práticas.
--   **Flexibilidade:** Permite definir um tamanho de SWAP personalizado com a flag `--size`.
+-   **Flexibilidade de Tamanho:** Permite definir um tamanho de SWAP personalizado com a flag `--size`, aceitando unidades em **Gigabytes (G)** e **Megabytes (M)**.
+-   **Log de Execução:** Salva um registro detalhado de todas as operações em `/var/log/swap_script.log` para fácil auditoria e depuração.
 -   **Verificação de Espaço:** Garante que há espaço em disco suficiente antes de criar o arquivo de SWAP.
 -   **Gerenciamento de SWAP Antigo:** Desativa partições de SWAP existentes e remove suas entradas do `/etc/fstab`.
 -   **Otimização de Performance:** Ajusta `vm.swappiness` e `vm.vfs_cache_pressure` para um uso mais eficiente da memória.
@@ -49,9 +50,13 @@ O script realiza backups automáticos de arquivos críticos antes de qualquer al
         sudo ./swap.sh
         ```
 
-    *   **Para definir um tamanho de SWAP específico (ex: 8GB):**
+    *   **Para definir um tamanho de SWAP específico:**
         ```bash
-        sudo ./swap.sh --size 8G
+        # Exemplo com Gigabytes
+        sudo ./swap.sh --size 4G
+
+        # Exemplo com Megabytes
+        sudo ./swap.sh --size 512M
         ```
 
     *   **Para ver as opções de ajuda:**
@@ -61,12 +66,13 @@ O script realiza backups automáticos de arquivos críticos antes de qualquer al
 
 ---
 
-📂 ## Backups Gerados
+📂 ## Arquivos Gerados
 
--   `/etc/fstab` é salvo como `/etc/fstab.backup.<data+hora>`.
--   `/etc/sysctl.conf` é salvo como `/etc/sysctl.conf.backup.<data+hora>`.
-
-Esses backups garantem que você possa restaurar as configurações originais em caso de necessidade.
+-   **Backups:**
+    -   `/etc/fstab` é salvo como `/etc/fstab.backup.<data+hora>`.
+    -   `/etc/sysctl.conf` é salvo como `/etc/sysctl.conf.backup.<data+hora>`.
+-   **Log de Execução:**
+    -   Um log detalhado de todas as operações é salvo em `/var/log/swap_script.log`.
 
 ---
 
