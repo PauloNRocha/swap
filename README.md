@@ -1,6 +1,6 @@
 # Script para Configuração Automática de SWAP no Linux
 
-📄 ## Descrição
+## 📄 Descrição
 
 Este script foi projetado para automatizar a configuração e criação da memória SWAP em sistemas Linux baseados em Debian/Ubuntu. Ele detecta a memória RAM disponível, define um tamanho de SWAP ideal, verifica o espaço em disco e ajusta parâmetros de desempenho do sistema para otimizar o uso da memória.
 
@@ -8,7 +8,7 @@ O script realiza backups automáticos de arquivos críticos, gera um log detalha
 
 ---
 
-⚙️ ## Recursos Principais
+## ⚙️ Recursos Principais
 
 -   **Configuração Inteligente:** Detecta a RAM e ajusta o tamanho do SWAP de acordo com as boas práticas.
 -   **Flexibilidade de Tamanho:** Permite definir um tamanho de SWAP personalizado com a flag `--size`, aceitando unidades em **Gigabytes (G)** e **Megabytes (M)**.
@@ -22,7 +22,7 @@ O script realiza backups automáticos de arquivos críticos, gera um log detalha
 
 ---
 
-🛠️ ## Pré-requisitos
+## 🛠️ Pré-requisitos
 
 -   Sistema operacional baseado em **Debian** ou **Ubuntu**.
 -   Acesso **root** ou permissões de superusuário (`sudo`).
@@ -30,7 +30,7 @@ O script realiza backups automáticos de arquivos críticos, gera um log detalha
 
 ---
 
-📥 ## Como Usar
+## 📥 Como Usar
 
 1.  **Clone o repositório ou baixe o script:**
     ```bash
@@ -66,7 +66,7 @@ O script realiza backups automáticos de arquivos críticos, gera um log detalha
 
 ---
 
-📂 ## Arquivos Gerados
+## 📂 Arquivos Gerados
 
 -   **Backups:**
     -   `/etc/fstab` é salvo como `/etc/fstab.backup.<data+hora>`.
@@ -76,19 +76,19 @@ O script realiza backups automáticos de arquivos críticos, gera um log detalha
 
 ---
 
-⚠️ ## Avisos Importantes
+## ⚠️ Avisos Importantes
 
 -   **Ambiente de Teste:** É altamente recomendável executar este script em um ambiente de teste (como uma Máquina Virtual) antes de aplicá-lo em um sistema de produção.
 -   **Reinicialização:** Algumas configurações exigem a reinicialização do sistema para serem totalmente aplicadas. O script oferecerá essa opção ao final da execução.
 
 ---
 
-🛡️ ## Licença
+## 🛡️ Licença
 
 Este projeto está licenciado sob a [MIT License](LICENSE), permitindo uso, modificação e distribuição livre.
 
 ---
 
-🤝 ## Contribuição
+## 🤝 Contribuição
 
 Contribuições são muito bem-vindas! Sinta-se à vontade para abrir *issues* ou enviar *pull requests* com melhorias, correções e sugestões.
