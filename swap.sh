@@ -225,12 +225,12 @@ log_msg green "✓ Backups concluídos."
 log_msg blue "Detectando quantidade de RAM..."
 if [[ ! -r /proc/meminfo ]]; then
   error_exit "Não foi possível ler informações de memória."
-}
+fi
 
 total_ram_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
 if [[ -z "$total_ram_kb" || ! "$total_ram_kb" =~ ^[0-9]+$ ]]; then
   error_exit "Não foi possível detectar a quantidade de RAM."
-}
+fi
 
 total_ram_mb=$((total_ram_kb / 1024))
 
@@ -276,11 +276,11 @@ if swapon --show=NAME,TYPE --noheadings 2>/dev/null | grep -q "partition"; then
         log_msg yellow "✓ Swap desativado: $dev"
         uuid=$(blkid -s UUID -o value "$dev" 2>/dev/null || true)
         if [[ -n "$uuid" ]]; then
-          sed -i.bak -e "/UUID=$uuid.*swap/d" /etc/fstab
+          sed -i "/UUID=$uuid.*swap/d" /etc/fstab
           log_msg yellow "✓ Entrada UUID removida do fstab"
         fi
         device_name=$(basename "$dev")
-        sed -i.bak -e "/${device_name}.*swap/d" /etc/fstab
+        sed -i "/${device_name}.*swap/d" /etc/fstab
         log_msg yellow "✓ Entrada do dispositivo removida do fstab"
       else
         log_msg yellow "⚠ Não foi possível desativar swap: $dev"
