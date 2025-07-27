@@ -6,6 +6,8 @@ Este script foi projetado para automatizar a configuração e criação da memó
 
 O script realiza backups automáticos de arquivos críticos, gera um log detalhado das operações e é capaz de desativar partições de SWAP antigas, gerenciando o arquivo `/swapfile` de forma inteligente e segura.
 
+![swap](https://github.com/user-attachments/assets/2f461774-a954-4084-9c88-da893a326e8f)
+
 ---
 
 ## ⚙️ Recursos Principais
@@ -60,6 +62,8 @@ O script realiza backups automáticos de arquivos críticos, gera um log detalha
         sudo ./swap.sh --size 512M
         ```
 
+<img width="446" height="44" alt="image" src="https://github.com/user-attachments/assets/3c1d5c51-09a4-49b2-86aa-7105571e12ee" />
+
     *   **Para ver as opções de ajuda:**
         ```bash
         sudo ./swap.sh --help
@@ -74,6 +78,8 @@ O script realiza backups automáticos de arquivos críticos, gera um log detalha
     -   `/etc/sysctl.conf` é salvo como `/etc/sysctl.conf.backup.<data+hora>`.
 -   **Log de Execução:**
     -   Um log detalhado de todas as operações é salvo em `/var/log/swap_script.log`.
+    
+<img width="805" height="74" alt="image" src="https://github.com/user-attachments/assets/238a44dc-4d55-486f-88fa-2c3a40cc2464" />
 
 ---
 
