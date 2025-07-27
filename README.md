@@ -34,8 +34,9 @@ O script realiza backups automáticos de arquivos críticos, gera um log detalha
 
 1.  **Clone o repositório ou baixe o script:**
     ```bash
-    git clone https://github.com/seu-usuario/swap.git
+    git clone https://github.com/PauloNRocha/swap.git
     cd swap
+    # O script principal está localizado no arquivo swap.sh
     ```
 
 2.  **Conceda permissão de execução ao script:**
