@@ -5,7 +5,7 @@ set -euo pipefail # Falha imediata em caso de erro
 # ==============================================================================
 # CONFIGURAÇÃO E VARIÁVEIS GLOBAIS
 # ==============================================================================
-SCRIPT_VERSION=1.5.2
+SCRIPT_VERSION=1.5.1
 LOG_FILE="/var/log/swap_script.log"
 LOG_ENABLED=false
 
@@ -43,17 +43,7 @@ log_msg() {
   if [[ "$LOG_ENABLED" = true ]]; then
     local plain_message
     plain_message=$(echo "$message" | sed 's/\x1b\[[0-9;]*m//g')
-    echo "[$timestamp] [INFO] $plain_message" >>"$LOG_FILE"
-  fi
-}
-
-# Função para registrar detalhes técnicos apenas no arquivo de log
-log_detail() {
-  if [[ "$LOG_ENABLED" = true ]]; then
-    local message="$*"
-    local timestamp
-    timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-    echo "[$timestamp] [DETAIL] $message" >>"$LOG_FILE"
+    echo "[$timestamp] [$color] $plain_message" >>"$LOG_FILE"
   fi
 }
 
@@ -146,14 +136,12 @@ create_swap_file() {
   local size_str="$1"
   local file_path="$2"
   local size_mb
-  local cmd_output
 
   log_msg blue "Criando arquivo de swap com tamanho $size_str..."
   swap_file_incomplete="$file_path"
 
   if fallocate -l "$size_str" "$file_path" >/dev/null 2>&1; then
     log_msg green "✓ Arquivo de swap criado com fallocate."
-    log_detail "Comando 'fallocate -l $size_str $file_path' executado com sucesso."
   else
     log_msg yellow "fallocate não suportado ou falhou. Usando dd como alternativa (pode ser mais lento)..."
     
@@ -164,23 +152,15 @@ create_swap_file() {
       size_mb=$(echo "$size_str" | sed -E 's/([0-9]+)[Mm]/\1/')
     fi
 
-    cmd_output=$(dd if=/dev/zero of="$file_path" bs=1M count="$size_mb" status=none 2>&1)
-    if [[ $? -eq 0 ]]; then
+    if dd if=/dev/zero of="$file_path" bs=1M count="$size_mb" status=none >/dev/null 2>&1; then
       log_msg green "✓ Arquivo de swap criado com dd."
-      log_detail "Comando 'dd' executado. Saída: $cmd_output"
     else
-      error_exit "Falha ao criar arquivo de swap com dd. Saída: $cmd_output"
+      error_exit "Falha ao criar arquivo de swap com dd"
     fi
   fi
 
-  log_detail "Alterando permissões do arquivo de swap para 600."
   chmod 600 "$file_path"
-  
-  log_detail "Formatando o arquivo como swap com mkswap."
-  cmd_output=$(mkswap "$file_path" 2>&1)
-  log_detail "Saída do mkswap: $cmd_output"
-
-  log_detail "Ativando o swap com swapon."
+  mkswap "$file_path" >/dev/null 2>&1
   swapon "$file_path"
   swap_file_incomplete=""
 }
@@ -220,7 +200,7 @@ done
 # Verifica se é executado como root
 if [[ $EUID -ne 0 ]]; then
   error_exit "Este script deve ser executado como root (use sudo)."
-}
+fi
 log_msg green "✓ Verificação de privilégios administrativos bem-sucedida!"
 
 # Verifica comandos necessários
@@ -233,18 +213,18 @@ log_msg green "✓ Todas as dependências estão disponíveis."
 # Verifica se o sistema usa apt
 if ! command -v apt &>/dev/null; then
   error_exit "Este script é compatível apenas com sistemas baseados em Debian/Ubuntu (apt)."
-}
+fi
 
 # Detecta quantidade de RAM
 log_msg blue "Detectando quantidade de RAM..."
 if [[ ! -r /proc/meminfo ]]; then
   error_exit "Não foi possível ler informações de memória."
-}
+fi
 
 total_ram_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
 if [[ -z "$total_ram_kb" || ! "$total_ram_kb" =~ ^[0-9]+$ ]]; then
   error_exit "Não foi possível detectar a quantidade de RAM."
-}
+fi
 
 total_ram_mb=$((total_ram_kb / 1024))
 
@@ -276,7 +256,7 @@ if [[ $available_space_bytes -lt $required_space ]]; then
   available_gb=$((available_space_bytes / 1024 / 1024 / 1024))
   required_gb=$((required_space / 1024 / 1024 / 1024))
   error_exit "Espaço insuficiente. Disponível: ${available_gb}GB, Necessário: ${required_gb}GB"
-}
+fi
 log_msg green "✓ Espaço em disco suficiente."
 
 # Desativa outras partições swap do tipo partition
@@ -348,7 +328,7 @@ fi
 log_msg blue "Ajustando configurações de desempenho..."
 if [[ ! -f /etc/sysctl.conf ]]; then
   touch /etc/sysctl.conf
-}
+fi
 backup_file "/etc/sysctl.conf"
 declare -A sysctl_params=(
   ["vm.swappiness"]="10"
