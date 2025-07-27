@@ -5,7 +5,7 @@ set -euo pipefail # Falha imediata em caso de erro
 # ==============================================================================
 # CONFIGURAÇÃO E VARIÁVEIS GLOBAIS
 # ==============================================================================
-SCRIPT_VERSION=1.5.1
+SCRIPT_VERSION=1.5.2
 LOG_FILE="/var/log/swap_script.log"
 LOG_ENABLED=false
 
@@ -205,7 +205,7 @@ log_msg green "✓ Verificação de privilégios administrativos bem-sucedida!"
 
 # Verifica comandos necessários
 log_msg blue "Verificando dependências..."
-for cmd in apt grep awk df fallocate mkswap swapon swapoff; do
+for cmd in apt grep awk df fallocate mkswap swapon swapoff blkid; do
   check_command "$cmd"
 done
 log_msg green "✓ Todas as dependências estão disponíveis."
@@ -215,16 +215,22 @@ if ! command -v apt &>/dev/null; then
   error_exit "Este script é compatível apenas com sistemas baseados em Debian/Ubuntu (apt)."
 fi
 
+# --- ETAPA DE BACKUP ---
+log_msg blue "Criando backups dos arquivos de configuração originais..."
+backup_file "/etc/fstab"
+backup_file "/etc/sysctl.conf"
+log_msg green "✓ Backups concluídos."
+
 # Detecta quantidade de RAM
 log_msg blue "Detectando quantidade de RAM..."
 if [[ ! -r /proc/meminfo ]]; then
   error_exit "Não foi possível ler informações de memória."
-fi
+}
 
 total_ram_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
 if [[ -z "$total_ram_kb" || ! "$total_ram_kb" =~ ^[0-9]+$ ]]; then
   error_exit "Não foi possível detectar a quantidade de RAM."
-fi
+}
 
 total_ram_mb=$((total_ram_kb / 1024))
 
@@ -263,7 +269,6 @@ log_msg green "✓ Espaço em disco suficiente."
 log_msg blue "Verificando partições de swap ativas..."
 if swapon --show=NAME,TYPE --noheadings 2>/dev/null | grep -q "partition"; then
   log_msg yellow "Desativando partições de swap ativas..."
-  backup_file "/etc/fstab"
   while IFS= read -r line; do
     dev=$(echo "$line" | awk '$2 == "partition" { print $1 }')
     if [[ -n "$dev" && "$dev" != "/swapfile" ]]; then
@@ -271,11 +276,11 @@ if swapon --show=NAME,TYPE --noheadings 2>/dev/null | grep -q "partition"; then
         log_msg yellow "✓ Swap desativado: $dev"
         uuid=$(blkid -s UUID -o value "$dev" 2>/dev/null || true)
         if [[ -n "$uuid" ]]; then
-          sed -i "/UUID=$uuid.*swap/d" /etc/fstab
+          sed -i.bak -e "/UUID=$uuid.*swap/d" /etc/fstab
           log_msg yellow "✓ Entrada UUID removida do fstab"
         fi
         device_name=$(basename "$dev")
-        sed -i "/${device_name}.*swap/d" /etc/fstab
+        sed -i.bak -e "/${device_name}.*swap/d" /etc/fstab
         log_msg yellow "✓ Entrada do dispositivo removida do fstab"
       else
         log_msg yellow "⚠ Não foi possível desativar swap: $dev"
@@ -317,7 +322,6 @@ fi
 # Configura /etc/fstab
 log_msg blue "Configurando /etc/fstab..."
 if ! grep -q '/swapfile' /etc/fstab; then
-  backup_file "/etc/fstab"
   echo '/swapfile none swap sw 0 0' >>/etc/fstab
   log_msg green "✓ Swap adicionado ao /etc/fstab."
 else
@@ -329,7 +333,6 @@ log_msg blue "Ajustando configurações de desempenho..."
 if [[ ! -f /etc/sysctl.conf ]]; then
   touch /etc/sysctl.conf
 fi
-backup_file "/etc/sysctl.conf"
 declare -A sysctl_params=(
   ["vm.swappiness"]="10"
   ["vm.vfs_cache_pressure"]="50"
