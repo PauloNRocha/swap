@@ -1,16 +1,35 @@
-# Script para Configuração Automática de SWAP no Linux
+# Script de Configuração Automática de SWAP
+<p align="center">
+  <img src="https://img.shields.io/badge/version-1.5.2-blue.svg" alt="Versão">
+  <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="Licença">
+  <img src="https://img.shields.io/badge/platform-Linux-lightgrey.svg" alt="Plataforma">
+  <img src="https://img.shields.io/badge/shell-Bash-yellow.svg" alt="Shell">
+</p>
+
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/2f461774-a954-4084-9c88-da893a326e8f" alt="Banner do Script" width="600">
+</p>
 
 ## 📄 Descrição
 
-Este script foi projetado para automatizar a configuração e criação da memória SWAP em sistemas Linux baseados em Debian/Ubuntu. Ele detecta a memória RAM disponível, define um tamanho de SWAP ideal, verifica o espaço em disco e ajusta parâmetros de desempenho do sistema para otimizar o uso da memória.
+Este script automatiza a configuração da memória **SWAP** em sistemas Linux baseados em **Debian/Ubuntu**. Ele detecta a RAM disponível, define um tamanho de SWAP ideal, verifica o espaço em disco e ajusta parâmetros de desempenho do sistema para otimizar o uso da memória de forma segura e eficiente.
 
-O script realiza backups automáticos de arquivos críticos, gera um log detalhado das operações e é capaz de desativar partições de SWAP antigas, gerenciando o arquivo `/swapfile` de forma inteligente e segura.
-
-![swap](https://github.com/user-attachments/assets/2f461774-a954-4084-9c88-da893a326e8f)
+[swap](https://github.com/user-attachments/assets/2f461774-a954-4084-9c88-da893a326e8f)
 
 ---
 
-## ⚙️ Recursos Principais
+## 📜 Sumário
+
+- [Recursos Principais](#-recursos-principais)
+- [Pré-requisitos](#-pré-requisitos)
+- [Como Usar](#-como-usar)
+- [Arquivos Gerados](#-arquivos-gerados)
+- [Licença](#-licença)
+- [Autor](#-autor)
+
+---
+
+## ✨ Recursos Principais
 
 -   **Configuração Inteligente:** Detecta a RAM e ajusta o tamanho do SWAP de acordo com as boas práticas.
 -   **Flexibilidade de Tamanho:** Permite definir um tamanho de SWAP personalizado com a flag `--size`, aceitando unidades em **Gigabytes (G)** e **Megabytes (M)**.
@@ -18,9 +37,9 @@ O script realiza backups automáticos de arquivos críticos, gera um log detalha
 -   **Verificação de Espaço:** Garante que há espaço em disco suficiente antes de criar o arquivo de SWAP.
 -   **Gerenciamento de SWAP Antigo:** Desativa partições de SWAP existentes e remove suas entradas do `/etc/fstab`.
 -   **Otimização de Performance:** Ajusta `vm.swappiness` e `vm.vfs_cache_pressure` para um uso mais eficiente da memória.
--   **Segurança:** Cria backups automáticos de `/etc/fstab` e `/etc/sysctl.conf` antes de modificá-los.
+-   **Segurança:** Cria backups automáticos de `/etc/fstab` e `/etc/sysctl.conf` **antes** de qualquer modificação.
 -   **Robustez:** Utiliza `dd` como alternativa caso `fallocate` não seja suportado pelo sistema de arquivos.
--   **Interativo:** Solicita confirmação antes de reiniciar o sistema.
+-   **Interativo:** Solicita confirmação do usuário antes de reiniciar o sistema.
 
 ---
 
@@ -34,26 +53,25 @@ O script realiza backups automáticos de arquivos críticos, gera um log detalha
 
 ## 📥 Como Usar
 
-1.  **Clone o repositório ou baixe o script:**
+1.  **Clone o repositório:**
     ```bash
     git clone https://github.com/PauloNRocha/swap.git
     cd swap
-    # O script principal está localizado no arquivo swap.sh
     ```
 
-2.  **Conceda permissão de execução ao script:**
+2.  **Conceda permissão de execução:**
     ```bash
     chmod +x swap.sh
     ```
 
 3.  **Execute com permissões de root:**
 
-    *   **Para configuração automática:**
+    *   Para **configuração automática**:
         ```bash
         sudo ./swap.sh
         ```
 
-    *   **Para definir um tamanho de SWAP específico:**
+    *   Para definir um **tamanho específico**:
         ```bash
         # Exemplo com Gigabytes
         sudo ./swap.sh --size 4G
@@ -62,9 +80,7 @@ O script realiza backups automáticos de arquivos críticos, gera um log detalha
         sudo ./swap.sh --size 512M
         ```
 
-<img width="446" height="44" alt="image" src="https://github.com/user-attachments/assets/3c1d5c51-09a4-49b2-86aa-7105571e12ee" />
-
-    *   **Para ver as opções de ajuda:**
+    *   Para ver as **opções de ajuda**:
         ```bash
         sudo ./swap.sh --help
         ```
@@ -78,24 +94,15 @@ O script realiza backups automáticos de arquivos críticos, gera um log detalha
     -   `/etc/sysctl.conf` é salvo como `/etc/sysctl.conf.backup.<data+hora>`.
 -   **Log de Execução:**
     -   Um log detalhado de todas as operações é salvo em `/var/log/swap_script.log`.
-    
-<img width="805" height="74" alt="image" src="https://github.com/user-attachments/assets/238a44dc-4d55-486f-88fa-2c3a40cc2464" />
-
----
-
-## ⚠️ Avisos Importantes
-
--   **Ambiente de Teste:** É altamente recomendável executar este script em um ambiente de teste (como uma Máquina Virtual) antes de aplicá-lo em um sistema de produção.
--   **Reinicialização:** Algumas configurações exigem a reinicialização do sistema para serem totalmente aplicadas. O script oferecerá essa opção ao final da execução.
 
 ---
 
 ## 🛡️ Licença
 
-Este projeto está licenciado sob a [MIT License](LICENSE), permitindo uso, modificação e distribuição livre.
+Este projeto está licenciado sob a **[MIT License](LICENSE)**, permitindo uso, modificação e distribuição livre.
 
 ---
 
-## 🤝 Contribuição
+## 👨‍💻 Autor
 
-Contribuições são muito bem-vindas! Sinta-se à vontade para abrir *issues* ou enviar *pull requests* com melhorias, correções e sugestões.
+Desenvolvido por **Paulo Rocha + IA** — 2025
