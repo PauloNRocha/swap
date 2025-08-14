@@ -100,7 +100,3 @@ Este script automatiza a configuração da memória **SWAP** em sistemas Linux b
 Este projeto está licenciado sob a **[MIT License](LICENSE)**, permitindo uso, modificação e distribuição livre.
 
 ---
-
-## 👨‍💻 Autor
-
-Desenvolvido por **Paulo Rocha + IA** — 2025
