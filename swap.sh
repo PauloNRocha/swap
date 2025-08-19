@@ -298,7 +298,7 @@ current_swap_info=$(swapon --show --bytes 2>/dev/null | grep '/swapfile' || true
 if [[ -n "$current_swap_info" ]]; then
   current_swap_size=$(echo "$current_swap_info" | awk '{print $3}')
   current_swap_gb=$((current_swap_size / 1024 / 1024 / 1024))
-  if [[ $current_swap_size -lt $swap_size_bytes ]]; then
+  if [[ $current_swap_size -ne $swap_size_bytes ]]; then
     log_msg yellow "Swap existente (${current_swap_gb}GB) é menor que o recomendado. Recriando..."
     if swapoff /swapfile && rm -f /swapfile; then
       create_swap_file "$swap_size" "/swapfile"
