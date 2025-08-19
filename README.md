@@ -1,6 +1,6 @@
 # Script de Configuração Automática de SWAP
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.5.2-blue.svg" alt="Versão">
+  <img src="https://img.shields.io/badge/version-1.5.3-blue.svg" alt="Versão">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="Licença">
   <img src="https://img.shields.io/badge/platform-Linux-lightgrey.svg" alt="Plataforma">
   <img src="https://img.shields.io/badge/shell-Bash-yellow.svg" alt="Shell">
