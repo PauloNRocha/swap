@@ -6,10 +6,6 @@
   <img src="https://img.shields.io/badge/shell-Bash-yellow.svg" alt="Shell">
 </p>
 
-<p align="center">
-  <img src="https://github.com/user-attachments/assets/2f461774-a954-4084-9c88-da893a326e8f" alt="Banner do Script" width="600">
-</p>
-
 ## 📄 Descrição
 
 Este script automatiza a configuração da memória **SWAP** em sistemas Linux baseados em **Debian/Ubuntu**. Ele detecta a RAM disponível, define um tamanho de SWAP ideal, verifica o espaço em disco e ajusta parâmetros de desempenho do sistema para otimizar o uso da memória de forma segura e eficiente.
