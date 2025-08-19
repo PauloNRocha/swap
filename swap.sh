@@ -5,7 +5,7 @@ set -euo pipefail # Falha imediata em caso de erro
 # ==============================================================================
 # CONFIGURAÇÃO E VARIÁVEIS GLOBAIS
 # ==============================================================================
-SCRIPT_VERSION=1.5.2
+SCRIPT_VERSION=1.5.3
 LOG_FILE="/var/log/swap_script.log"
 LOG_ENABLED=false
 
