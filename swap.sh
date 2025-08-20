@@ -101,7 +101,7 @@ exibir_banner() {
 EOF
   echo -e "${NC}"
   log_msg green "Script de configuração de SWAP versão ${SCRIPT_VERSION}"
-  log_msg green "Desenvolvido por Paulo Rocha + IA\n"
+  log_msg green "Desenvolvido por Paulo Rocha\n"
 }
 
 # Função para exibir o menu de ajuda
