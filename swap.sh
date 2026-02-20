@@ -5,9 +5,12 @@ set -euo pipefail # Falha imediata em caso de erro
 # ==============================================================================
 # CONFIGURAÇÃO E VARIÁVEIS GLOBAIS
 # ==============================================================================
-SCRIPT_VERSION=1.5.4
+SCRIPT_VERSION=1.5.5
 LOG_FILE="/var/log/swap_script.log"
 LOG_ENABLED=false
+SWAP_TARGET_KIND="file"
+SWAP_TARGET_PATH="/swapfile"
+SWAP_ZVOL_DATASET=""
 
 # Definir cores
 GREEN='\e[32m'
@@ -59,6 +62,12 @@ cleanup() {
   if [[ -n "${swap_file_incomplete-}" && -f "$swap_file_incomplete" ]]; then
     rm -f "$swap_file_incomplete"
     log_msg yellow "Arquivo de swap incompleto removido."
+  fi
+  if [[ -n "${swap_zvol_incomplete-}" ]] && command -v zfs >/dev/null 2>&1; then
+    if zfs list -H "$swap_zvol_incomplete" >/dev/null 2>&1; then
+      zfs destroy -f "$swap_zvol_incomplete" >/dev/null 2>&1 || true
+      log_msg yellow "Volume ZFS de swap incompleto removido: $swap_zvol_incomplete"
+    fi
   fi
 }
 
@@ -133,6 +142,21 @@ check_command() {
   command -v "$1" >/dev/null 2>&1 || error_exit "Comando '$1' não encontrado"
 }
 
+is_swap_target_device() {
+  local candidate="$1"
+  local candidate_real
+  local target_real
+
+  if [[ "$candidate" == "$SWAP_TARGET_PATH" ]]; then
+    return 0
+  fi
+
+  candidate_real=$(readlink -f "$candidate" 2>/dev/null || echo "$candidate")
+  target_real=$(readlink -f "$SWAP_TARGET_PATH" 2>/dev/null || echo "$SWAP_TARGET_PATH")
+
+  [[ "$candidate_real" == "$target_real" ]]
+}
+
 # Função para criar backup de um arquivo
 backup_file() {
   local file_path="$1"
@@ -161,30 +185,84 @@ create_swap_file_with_dd() {
   fi
 }
 
+detect_zfs_pool_for_root() {
+  local root_dataset
+  local pool_name
+
+  root_dataset=$(zfs list -H -o name / 2>/dev/null || true)
+  if [[ -z "$root_dataset" ]]; then
+    root_dataset=$(findmnt -n -o SOURCE / 2>/dev/null || true)
+  fi
+  [[ -n "$root_dataset" ]] || return 1
+
+  pool_name="${root_dataset%%/*}"
+  [[ -n "$pool_name" ]] || return 1
+
+  echo "$pool_name"
+}
+
+create_swap_zvol() {
+  local size_str="$1"
+  local dataset="$2"
+  local device_path="/dev/zvol/$dataset"
+  local page_size
+  local existing_type
+
+  page_size=$(getconf PAGESIZE 2>/dev/null || echo 4096)
+
+  log_msg blue "Criando volume ZFS de swap ($dataset) com tamanho $size_str..."
+  swap_zvol_incomplete="$dataset"
+
+  if zfs list -H "$dataset" >/dev/null 2>&1; then
+    existing_type=$(zfs get -H -o value type "$dataset" 2>/dev/null || true)
+    if [[ "$existing_type" != "volume" ]]; then
+      error_exit "O dataset $dataset existe e não é um volume ZFS. Defina manualmente outro nome para swap."
+    fi
+    log_msg yellow "Volume ZFS $dataset já existe. Recriando..."
+    swapoff "$device_path" >/dev/null 2>&1 || true
+    zfs destroy -f "$dataset" >/dev/null 2>&1 || error_exit "Falha ao remover volume ZFS antigo: $dataset"
+  fi
+
+  zfs create -V "$size_str" -b "$page_size" \
+    -o compression=zle \
+    -o logbias=throughput \
+    -o sync=always \
+    -o primarycache=metadata \
+    -o secondarycache=none \
+    -o com.sun:auto-snapshot=false \
+    "$dataset" >/dev/null 2>&1 || error_exit "Falha ao criar volume ZFS de swap: $dataset"
+
+  if command -v udevadm >/dev/null 2>&1; then
+    udevadm settle >/dev/null 2>&1 || true
+  fi
+
+  for _ in {1..20}; do
+    [[ -b "$device_path" ]] && break
+    sleep 0.2
+  done
+  [[ -b "$device_path" ]] || error_exit "Dispositivo de swap ZFS não encontrado: $device_path"
+
+  mkswap "$device_path" >/dev/null 2>&1 || error_exit "Falha ao inicializar assinatura de swap em $device_path"
+  swapon "$device_path" >/dev/null 2>&1 || error_exit "Falha ao ativar swap em $device_path"
+
+  swap_zvol_incomplete=""
+}
+
 create_swap_file() {
   local size_str="$1"
   local file_path="$2"
-  local fs_type
   local created_with_dd=false
   local swapon_output=""
 
   log_msg blue "Criando arquivo de swap com tamanho $size_str..."
   swap_file_incomplete="$file_path"
 
-  fs_type=$(stat -f -c %T "$(dirname "$file_path")" 2>/dev/null || echo "desconhecido")
-
-  if [[ "$fs_type" == "zfs" ]]; then
-    log_msg yellow "Filesystem ZFS detectado para $file_path. Usando dd para evitar arquivo de swap com holes."
+  if fallocate -l "$size_str" "$file_path" >/dev/null 2>&1; then
+    log_msg green "✓ Arquivo de swap criado com fallocate."
+  else
+    log_msg yellow "fallocate não suportado ou falhou. Usando dd como alternativa (pode ser mais lento)..."
     create_swap_file_with_dd "$size_str" "$file_path"
     created_with_dd=true
-  else
-    if fallocate -l "$size_str" "$file_path" >/dev/null 2>&1; then
-      log_msg green "✓ Arquivo de swap criado com fallocate."
-    else
-      log_msg yellow "fallocate não suportado ou falhou. Usando dd como alternativa (pode ser mais lento)..."
-      create_swap_file_with_dd "$size_str" "$file_path"
-      created_with_dd=true
-    fi
   fi
 
   chmod 600 "$file_path"
@@ -246,7 +324,7 @@ log_msg green "✓ Verificação de privilégios administrativos bem-sucedida!"
 
 # Verifica comandos necessários
 log_msg blue "Verificando dependências..."
-for cmd in apt grep awk df dd stat mkswap swapon swapoff blkid; do
+for cmd in apt grep awk df dd stat mkswap swapon swapoff blkid readlink; do
   check_command "$cmd"
 done
 if ! command -v fallocate >/dev/null 2>&1; then
@@ -309,13 +387,29 @@ if [[ $available_space_bytes -lt $required_space ]]; then
 fi
 log_msg green "✓ Espaço em disco suficiente."
 
+# Define estratégia de swap
+log_msg blue "Definindo estratégia de swap..."
+root_fs_type=$(stat -f -c %T / 2>/dev/null || echo "desconhecido")
+if [[ "$root_fs_type" == "zfs" ]]; then
+  check_command zfs
+  zfs_pool=$(detect_zfs_pool_for_root) || error_exit "Não foi possível identificar o pool ZFS do sistema raiz."
+  SWAP_TARGET_KIND="zvol"
+  SWAP_ZVOL_DATASET="${zfs_pool}/swap"
+  SWAP_TARGET_PATH="/dev/zvol/${SWAP_ZVOL_DATASET}"
+  log_msg yellow "Filesystem raiz ZFS detectado. Será usado volume ZFS de swap: $SWAP_TARGET_PATH"
+else
+  SWAP_TARGET_KIND="file"
+  SWAP_TARGET_PATH="/swapfile"
+  log_msg green "✓ Estratégia de swap: arquivo em $SWAP_TARGET_PATH."
+fi
+
 # Desativa outras partições swap do tipo partition
 log_msg blue "Verificando partições de swap ativas..."
 if swapon --show=NAME,TYPE --noheadings 2>/dev/null | grep -q "partition"; then
   log_msg yellow "Desativando partições de swap ativas..."
   while IFS= read -r line; do
     dev=$(echo "$line" | awk '$2 == "partition" { print $1 }')
-    if [[ -n "$dev" && "$dev" != "/swapfile" ]]; then
+    if [[ -n "$dev" ]] && ! is_swap_target_device "$dev"; then
       if swapoff "$dev" 2>/dev/null; then
         log_msg yellow "✓ Swap desativado: $dev"
         uuid=$(blkid -s UUID -o value "$dev" 2>/dev/null || true)
@@ -335,41 +429,69 @@ else
   log_msg green "✓ Nenhuma partição de swap ativa encontrada."
 fi
 
-# Gerencia arquivo de swap
-log_msg blue "Verificando arquivo de swap existente..."
-current_swap_info=$(swapon --show --bytes 2>/dev/null | grep '/swapfile' || true)
+# Gerencia swap alvo
+log_msg blue "Verificando swap existente..."
+current_swap_info=""
+while IFS= read -r line; do
+  active_swap_name=$(echo "$line" | awk '{print $1}')
+  if is_swap_target_device "$active_swap_name"; then
+    current_swap_info="$line"
+    break
+  fi
+done < <(swapon --show --bytes --noheadings 2>/dev/null)
 
 if [[ -n "$current_swap_info" ]]; then
+  current_swap_name=$(echo "$current_swap_info" | awk '{print $1}')
   current_swap_size=$(echo "$current_swap_info" | awk '{print $3}')
   current_swap_gb=$((current_swap_size / 1024 / 1024 / 1024))
   if [[ $current_swap_size -ne $swap_size_bytes ]]; then
     log_msg yellow "Swap existente (${current_swap_gb}GB) é menor que o recomendado. Recriando..."
-    if swapoff /swapfile && rm -f /swapfile; then
-      create_swap_file "$swap_size" "/swapfile"
-      log_msg green "✓ Arquivo de swap recriado com sucesso."
+    if [[ "$SWAP_TARGET_KIND" == "file" ]]; then
+      if swapoff "$current_swap_name" && rm -f "$SWAP_TARGET_PATH"; then
+        create_swap_file "$swap_size" "$SWAP_TARGET_PATH"
+        log_msg green "✓ Arquivo de swap recriado com sucesso."
+      else
+        error_exit "Falha ao remover swap existente"
+      fi
     else
-      error_exit "Falha ao remover swap existente"
+      if ! swapoff "$current_swap_name" 2>/dev/null; then
+        error_exit "Falha ao desativar swap existente em $SWAP_TARGET_PATH"
+      fi
+      create_swap_zvol "$swap_size" "$SWAP_ZVOL_DATASET"
+      log_msg green "✓ Volume ZFS de swap recriado com sucesso."
     fi
   else
     log_msg green "✓ Swap existente (${current_swap_gb}GB) é adequado."
   fi
 else
-  log_msg blue "Criando novo arquivo de swap..."
-  if [[ -f /swapfile ]]; then
-    log_msg yellow "Arquivo /swapfile existe mas não está ativo. Removendo..."
-    rm -f /swapfile
+  log_msg blue "Criando novo swap..."
+  if [[ "$SWAP_TARGET_KIND" == "file" ]]; then
+    if [[ -f "$SWAP_TARGET_PATH" ]]; then
+      log_msg yellow "Arquivo $SWAP_TARGET_PATH existe mas não está ativo. Removendo..."
+      rm -f "$SWAP_TARGET_PATH"
+    fi
+    create_swap_file "$swap_size" "$SWAP_TARGET_PATH"
+    log_msg green "✓ Arquivo de swap criado e ativado com sucesso."
+  else
+    if [[ -f /swapfile ]]; then
+      log_msg yellow "Arquivo /swapfile detectado em sistema ZFS. Removendo para evitar conflitos..."
+      rm -f /swapfile
+    fi
+    create_swap_zvol "$swap_size" "$SWAP_ZVOL_DATASET"
+    log_msg green "✓ Volume ZFS de swap criado e ativado com sucesso."
   fi
-  create_swap_file "$swap_size" "/swapfile"
-  log_msg green "✓ Arquivo de swap criado e ativado com sucesso."
 fi
 
 # Configura /etc/fstab
 log_msg blue "Configurando /etc/fstab..."
-if ! grep -q '/swapfile' /etc/fstab; then
-  echo '/swapfile none swap sw 0 0' >>/etc/fstab
-  log_msg green "✓ Swap adicionado ao /etc/fstab."
+if [[ "$SWAP_TARGET_KIND" == "zvol" ]]; then
+  sed -i '\|/swapfile none swap|d' /etc/fstab
+fi
+if ! grep -Fq "$SWAP_TARGET_PATH none swap sw 0 0" /etc/fstab; then
+  echo "$SWAP_TARGET_PATH none swap sw 0 0" >>/etc/fstab
+  log_msg green "✓ Swap adicionado ao /etc/fstab: $SWAP_TARGET_PATH"
 else
-  log_msg green "✓ Swap já configurado no /etc/fstab."
+  log_msg green "✓ Swap já configurado no /etc/fstab: $SWAP_TARGET_PATH"
 fi
 
 # Configura parâmetros de desempenho
@@ -400,7 +522,7 @@ log_msg green "✓ Sistema configurado para melhor desempenho."
 # Exibe resumo da configuração
 log_msg blue "=== RESUMO DA CONFIGURAÇÃO ==="
 log_msg green "RAM total: ${total_ram_mb}MB"
-log_msg green "Swap configurado: $swap_size"
+log_msg green "Swap configurado: $swap_size em $SWAP_TARGET_PATH"
 log_msg green "Swappiness: 10 (baixo uso de swap)"
 log_msg green "VFS cache pressure: 50 (balanceado)"
 log_msg blue "================================"

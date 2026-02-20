@@ -1,6 +1,6 @@
 # Script de Configuração Automática de SWAP
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.5.4-blue.svg" alt="Versão">
+  <img src="https://img.shields.io/badge/version-1.5.5-blue.svg" alt="Versão">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="Licença">
   <img src="https://img.shields.io/badge/platform-Linux-lightgrey.svg" alt="Plataforma">
   <img src="https://img.shields.io/badge/shell-Bash-yellow.svg" alt="Shell">
@@ -33,6 +33,7 @@ Este script automatiza a configuração da memória **SWAP** em sistemas Linux b
 -   **Otimização de Performance:** Ajusta `vm.swappiness` e `vm.vfs_cache_pressure` para um uso mais eficiente da memória.
 -   **Segurança:** Cria backups automáticos de `/etc/fstab` e `/etc/sysctl.conf` **antes** de qualquer modificação.
 -   **Robustez:** Utiliza `dd` como alternativa caso `fallocate` não seja suportado pelo sistema de arquivos.
+-   **Compatibilidade com ZFS:** Em sistemas com ZFS, cria e ativa SWAP com `zvol` (`/dev/zvol/...`) em vez de `swapfile`.
 -   **Interativo:** Solicita confirmação do usuário antes de reiniciar o sistema.
 
 ---
