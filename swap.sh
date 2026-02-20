@@ -5,7 +5,7 @@ set -euo pipefail # Falha imediata em caso de erro
 # ==============================================================================
 # CONFIGURAÇÃO E VARIÁVEIS GLOBAIS
 # ==============================================================================
-SCRIPT_VERSION=1.5.3
+SCRIPT_VERSION=1.5.4
 LOG_FILE="/var/log/swap_script.log"
 LOG_ENABLED=false
 
@@ -42,7 +42,7 @@ log_msg() {
 
   if [[ "$LOG_ENABLED" = true ]]; then
     local plain_message
-    plain_message=$(echo "$message" | sed 's/\x1b\[[0-9;]*m//g')
+    plain_message="$message"
     echo "[$timestamp] [$color] $plain_message" >>"$LOG_FILE"
   fi
 }
@@ -88,6 +88,21 @@ parse_size_to_bytes() {
   echo "$size_bytes"
 }
 
+# Função para converter tamanho (ex: 2G, 512M) para MB
+parse_size_to_mb() {
+  local size_str="$1"
+  local size_mb
+
+  if [[ "$size_str" == *[Gg] ]]; then
+    size_mb=$(echo "$size_str" | sed -E 's/([0-9]+)[Gg]/\1/')
+    size_mb=$((size_mb * 1024))
+  else
+    size_mb=$(echo "$size_str" | sed -E 's/([0-9]+)[Mm]/\1/')
+  fi
+
+  echo "$size_mb"
+}
+
 # Função para exibir o banner inicial
 exibir_banner() {
   echo -e "${GREEN}"
@@ -122,7 +137,8 @@ check_command() {
 backup_file() {
   local file_path="$1"
   if [[ -f "$file_path" ]]; then
-    local backup_path="${file_path}.backup.$(date +%Y%m%d_%H%M%S)"
+    local backup_path
+    backup_path="${file_path}.backup.$(date +%Y%m%d_%H%M%S)"
     if cp "$file_path" "$backup_path"; then
       log_msg green "✓ Backup de $file_path criado em $backup_path"
     else
@@ -132,36 +148,61 @@ backup_file() {
 }
 
 # Função para criar o arquivo de swap
-create_swap_file() {
+create_swap_file_with_dd() {
   local size_str="$1"
   local file_path="$2"
   local size_mb
 
+  size_mb=$(parse_size_to_mb "$size_str")
+  if dd if=/dev/zero of="$file_path" bs=1M count="$size_mb" status=none >/dev/null 2>&1; then
+    log_msg green "✓ Arquivo de swap criado com dd."
+  else
+    error_exit "Falha ao criar arquivo de swap com dd"
+  fi
+}
+
+create_swap_file() {
+  local size_str="$1"
+  local file_path="$2"
+  local fs_type
+  local created_with_dd=false
+  local swapon_output=""
+
   log_msg blue "Criando arquivo de swap com tamanho $size_str..."
   swap_file_incomplete="$file_path"
 
-  if fallocate -l "$size_str" "$file_path" >/dev/null 2>&1; then
-    log_msg green "✓ Arquivo de swap criado com fallocate."
-  else
-    log_msg yellow "fallocate não suportado ou falhou. Usando dd como alternativa (pode ser mais lento)..."
-    
-    if [[ "$size_str" == *[Gg] ]]; then
-      size_mb=$(echo "$size_str" | sed -E 's/([0-9]+)[Gg]/\1/')
-      size_mb=$((size_mb * 1024))
-    else
-      size_mb=$(echo "$size_str" | sed -E 's/([0-9]+)[Mm]/\1/')
-    fi
+  fs_type=$(stat -f -c %T "$(dirname "$file_path")" 2>/dev/null || echo "desconhecido")
 
-    if dd if=/dev/zero of="$file_path" bs=1M count="$size_mb" status=none >/dev/null 2>&1; then
-      log_msg green "✓ Arquivo de swap criado com dd."
+  if [[ "$fs_type" == "zfs" ]]; then
+    log_msg yellow "Filesystem ZFS detectado para $file_path. Usando dd para evitar arquivo de swap com holes."
+    create_swap_file_with_dd "$size_str" "$file_path"
+    created_with_dd=true
+  else
+    if fallocate -l "$size_str" "$file_path" >/dev/null 2>&1; then
+      log_msg green "✓ Arquivo de swap criado com fallocate."
     else
-      error_exit "Falha ao criar arquivo de swap com dd"
+      log_msg yellow "fallocate não suportado ou falhou. Usando dd como alternativa (pode ser mais lento)..."
+      create_swap_file_with_dd "$size_str" "$file_path"
+      created_with_dd=true
     fi
   fi
 
   chmod 600 "$file_path"
-  mkswap "$file_path" >/dev/null 2>&1
-  swapon "$file_path"
+  mkswap "$file_path" >/dev/null 2>&1 || error_exit "Falha ao inicializar assinatura de swap em $file_path"
+
+  if ! swapon_output=$(swapon "$file_path" 2>&1); then
+    if echo "$swapon_output" | grep -qi "holes" && [[ "$created_with_dd" == false ]]; then
+      log_msg yellow "swapon detectou arquivo com holes após fallocate. Recriando com dd..."
+      rm -f "$file_path"
+      create_swap_file_with_dd "$size_str" "$file_path"
+      chmod 600 "$file_path"
+      mkswap "$file_path" >/dev/null 2>&1 || error_exit "Falha ao inicializar assinatura de swap em $file_path"
+      swapon_output=$(swapon "$file_path" 2>&1) || error_exit "Falha ao ativar swap após recriação com dd: $swapon_output"
+    else
+      error_exit "Falha ao ativar swap em $file_path: $swapon_output"
+    fi
+  fi
+
   swap_file_incomplete=""
 }
 
@@ -205,9 +246,12 @@ log_msg green "✓ Verificação de privilégios administrativos bem-sucedida!"
 
 # Verifica comandos necessários
 log_msg blue "Verificando dependências..."
-for cmd in apt grep awk df fallocate mkswap swapon swapoff blkid; do
+for cmd in apt grep awk df dd stat mkswap swapon swapoff blkid; do
   check_command "$cmd"
 done
+if ! command -v fallocate >/dev/null 2>&1; then
+  log_msg yellow "Aviso: fallocate não encontrado. O script usará dd para criar o arquivo de swap."
+fi
 log_msg green "✓ Todas as dependências estão disponíveis."
 
 # Verifica se o sistema usa apt
