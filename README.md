@@ -1,6 +1,6 @@
 # Provisionamento de SWAP para Debian e Ubuntu
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.5.7-blue.svg" alt="Versão">
+  <img src="https://img.shields.io/badge/version-1.5.8-blue.svg" alt="Versão">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="Licença">
   <img src="https://img.shields.io/badge/platform-Linux-lightgrey.svg" alt="Plataforma">
   <img src="https://img.shields.io/badge/shell-Bash-yellow.svg" alt="Shell">
@@ -119,6 +119,8 @@ Arquivos modificados pelo script:
 
 - `/etc/fstab`
 - `/etc/sysctl.conf`
+
+Ao normalizar o `/etc/fstab`, o script mantém o arquivo com dono `root:root` e modo `0644`, padrão esperado em Debian/Ubuntu.
 
 Artefatos criados pelo script:
 

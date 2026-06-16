@@ -2,6 +2,14 @@
 
 ## [Não lançado]
 
+## [1.5.8] - 2026-06-16
+
+### Corrigido
+
+- Corrige permissões indevidas em `/etc/fstab` após a normalização das entradas de swap.
+- Garante que `/etc/fstab` permaneça com dono `root:root` e modo `0644`, padrão esperado em Debian/Ubuntu e necessário para componentes como Snap lerem a configuração do sistema.
+- Corrige o caso em que o conteúdo do `/etc/fstab` já estava correto, mas as permissões continuavam restritivas.
+
 ## [1.5.7] - 2026-06-16
 
 ### Corrigido

@@ -5,7 +5,7 @@ set -euo pipefail # Falha imediata em caso de erro
 # ==============================================================================
 # CONFIGURAÇÃO E VARIÁVEIS GLOBAIS
 # ==============================================================================
-SCRIPT_VERSION=1.5.7
+SCRIPT_VERSION=1.5.8
 LOG_FILE="/var/log/swap_script.log"
 LOG_ENABLED=false
 SWAP_TARGET_KIND="file"
@@ -201,6 +201,22 @@ is_swap_target_device() {
   [[ "$candidate_real" == "$target_real" ]]
 }
 
+ensure_fstab_permissions() {
+  local current_owner
+  local current_mode
+
+  current_owner=$(stat -c "%U:%G" /etc/fstab 2>/dev/null || echo "")
+  current_mode=$(stat -c "%a" /etc/fstab 2>/dev/null || echo "")
+
+  if [[ "$current_owner" == "root:root" && "$current_mode" == "644" ]]; then
+    return
+  fi
+
+  chown root:root /etc/fstab 2>/dev/null || error_exit "Falha ao ajustar dono de /etc/fstab para root:root"
+  chmod 644 /etc/fstab 2>/dev/null || error_exit "Falha ao ajustar permissões de /etc/fstab para 0644"
+  log_msg green "✓ Permissões do /etc/fstab ajustadas para root:root 0644."
+}
+
 normalize_fstab_swap_entries() {
   local tmp_file
   local line
@@ -243,18 +259,18 @@ normalize_fstab_swap_entries() {
   if [[ "$target_entry_found" == false ]]; then
     printf '%s\n' "$target_line" >>"$tmp_file"
   fi
-  chmod --reference=/etc/fstab "$tmp_file" 2>/dev/null || chmod 644 "$tmp_file"
-  if command -v chown >/dev/null 2>&1; then
-    chown --reference=/etc/fstab "$tmp_file" 2>/dev/null || true
-  fi
+  chown root:root "$tmp_file" 2>/dev/null || error_exit "Falha ao ajustar dono do arquivo temporário do /etc/fstab"
+  chmod 644 "$tmp_file" 2>/dev/null || error_exit "Falha ao ajustar permissões do arquivo temporário do /etc/fstab"
 
   if cmp -s "$tmp_file" /etc/fstab; then
     rm -f "$tmp_file"
+    ensure_fstab_permissions
     log_msg green "✓ /etc/fstab já continha apenas a entrada de swap esperada: $SWAP_TARGET_PATH"
     return
   fi
 
   mv "$tmp_file" /etc/fstab
+  ensure_fstab_permissions
 
   if [[ $removed_count -gt 0 ]]; then
     log_msg green "✓ Entradas antigas de swap removidas do /etc/fstab: $removed_count"
