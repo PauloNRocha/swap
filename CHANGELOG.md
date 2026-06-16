@@ -7,15 +7,25 @@
 ### Corrigido
 
 - Evita recriação desnecessária do swap quando o tamanho ativo difere do alvo apenas por overhead operacional do `mkswap`.
-- Corrige a mensagem exibida quando o swap existente é maior que o tamanho alvo.
+- Torna a normalização do `/etc/fstab` idempotente, evitando reescrita e mensagens de remoção quando a entrada existente já está correta.
+- Remove o aviso de log sem permissão antes do erro de execução sem `sudo`.
 - Interrompe a exibição de mensagens de limpeza após execuções bem-sucedidas.
+
+### Alterado
+
+- Melhora o resumo final com backend, caminho alvo, tamanho alvo e comandos rápidos de validação.
+- Atualiza os créditos do projeto.
+
+## [1.5.6] - 2026-06-16
+
+### Corrigido
+
+- Corrige a mensagem exibida quando o swap existente é maior que o tamanho alvo.
 
 ### Alterado
 
 - Normaliza o `/etc/fstab` para manter apenas uma entrada persistente de swap.
 - Desativa qualquer swap ativo fora do alvo selecionado, não apenas partições de swap.
-- Melhora o resumo final com backend, caminho alvo, tamanho alvo e comandos rápidos de validação.
-- Atualiza os créditos do projeto.
 
 ## [1.5.5] - 2026-02-20
 
