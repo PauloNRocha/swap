@@ -1,6 +1,6 @@
 # Provisionamento de SWAP para Debian e Ubuntu
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.5.5-blue.svg" alt="Versão">
+  <img src="https://img.shields.io/badge/version-1.5.7-blue.svg" alt="Versão">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="Licença">
   <img src="https://img.shields.io/badge/platform-Linux-lightgrey.svg" alt="Plataforma">
   <img src="https://img.shields.io/badge/shell-Bash-yellow.svg" alt="Shell">
@@ -20,8 +20,9 @@ Script em Bash para provisionar e ajustar SWAP em hosts Debian e Ubuntu. O fluxo
 - [Validação pós-execução](#validação-pós-execução)
 - [Limitações](#limitações)
 - [Observações operacionais](#observações-operacionais)
+- [Changelog](#changelog)
 - [Licença](#licença)
-- [Autor](#autor)
+- [Créditos](#créditos)
 
 ## Visão geral
 
@@ -50,9 +51,10 @@ Além da criação do swap, o script:
 - Define um tamanho sugerido de swap quando `--size` não é informado.
 - Verifica espaço disponível antes de tentar criar o swap.
 - Identifica se o sistema está em ZFS para usar `zvol` em vez de `swapfile`.
-- Desativa partições de swap antigas e remove entradas antigas do `/etc/fstab` quando necessário.
+- Desativa swaps antigos e remove entradas antigas do `/etc/fstab` quando necessário.
 - Cria e ativa o swap.
-- Adiciona a persistência no `/etc/fstab`.
+- Normaliza o `/etc/fstab` para manter apenas uma entrada de swap persistente.
+- Evita recriar o swap quando a diferença de tamanho é apenas overhead operacional do `mkswap`.
 - Ajusta os parâmetros abaixo em `/etc/sysctl.conf`: `vm.swappiness=10`, `vm.vfs_cache_pressure=50`, `vm.dirty_ratio=15`, `vm.dirty_background_ratio=5`.
 - Cria backup de arquivos sensíveis antes de modificar a configuração.
 
@@ -155,13 +157,20 @@ Resultado esperado:
 ## Observações operacionais
 
 - Em hosts com ZFS, o backend de swap é `zvol`; não é usado `swapfile`.
-- O script altera configuração persistente do sistema. Revise o conteúdo de `/etc/fstab` e `/etc/sysctl.conf` se o host já possuir política própria de baseline.
+- O script altera configuração persistente do sistema e remove entradas antigas de swap do `/etc/fstab`. Revise o conteúdo de `/etc/fstab` e `/etc/sysctl.conf` se o host já possuir política própria de baseline.
 - O fluxo foi pensado para operação individual no host. Para automação em lote, o ideal é complementar com uma camada de orquestração e validação externa.
+
+## Changelog
+
+O histórico oficial de mudanças fica em [CHANGELOG.md](CHANGELOG.md). As notas de release publicadas no GitHub devem ser derivadas desse arquivo.
 
 ## Licença
 
 Este projeto está licenciado sob a [MIT License](LICENSE).
 
-## Autor
+## Créditos
 
-Paulo Rocha
+- Desenvolvimento técnico: Codex (OpenAI).
+- Direção do projeto, validação prática e testes em ambiente real: Paulo Rocha.
+- Base técnica: `swapon(8)` do util-linux, documentação do OpenZFS e práticas operacionais comuns em Debian/Ubuntu.
+- Validação estática: ShellCheck.

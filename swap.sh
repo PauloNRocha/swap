@@ -5,12 +5,13 @@ set -euo pipefail # Falha imediata em caso de erro
 # ==============================================================================
 # CONFIGURAÇÃO E VARIÁVEIS GLOBAIS
 # ==============================================================================
-SCRIPT_VERSION=1.5.5
+SCRIPT_VERSION=1.5.7
 LOG_FILE="/var/log/swap_script.log"
 LOG_ENABLED=false
 SWAP_TARGET_KIND="file"
 SWAP_TARGET_PATH="/swapfile"
 SWAP_ZVOL_DATASET=""
+SWAP_SIZE_TOLERANCE_BYTES=$((1024 * 1024))
 
 # Definir cores
 GREEN='\e[32m'
@@ -58,17 +59,32 @@ error_exit() {
 
 # Função de limpeza para reverter alterações (chamada pelo trap)
 cleanup() {
-  log_msg yellow "Executando limpeza..."
+  local exit_code=$?
+  local cleaned=false
+
+  [[ $exit_code -eq 0 ]] && return 0
+  trap - EXIT
+
   if [[ -n "${swap_file_incomplete-}" && -f "$swap_file_incomplete" ]]; then
+    if [[ "$cleaned" == false ]]; then
+      log_msg yellow "Executando limpeza..."
+      cleaned=true
+    fi
     rm -f "$swap_file_incomplete"
     log_msg yellow "Arquivo de swap incompleto removido."
   fi
   if [[ -n "${swap_zvol_incomplete-}" ]] && command -v zfs >/dev/null 2>&1; then
     if zfs list -H "$swap_zvol_incomplete" >/dev/null 2>&1; then
+      if [[ "$cleaned" == false ]]; then
+        log_msg yellow "Executando limpeza..."
+        cleaned=true
+      fi
       zfs destroy -f "$swap_zvol_incomplete" >/dev/null 2>&1 || true
       log_msg yellow "Volume ZFS de swap incompleto removido: $swap_zvol_incomplete"
     fi
   fi
+
+  exit "$exit_code"
 }
 
 # Trap para chamar a função de limpeza em caso de erro ou interrupção
@@ -112,6 +128,34 @@ parse_size_to_mb() {
   echo "$size_mb"
 }
 
+format_bytes() {
+  local bytes="$1"
+
+  awk -v bytes="$bytes" 'BEGIN {
+    gib = 1024 * 1024 * 1024
+    mib = 1024 * 1024
+    if (bytes >= gib) {
+      printf "%.2fG", bytes / gib
+    } else {
+      printf "%.0fM", bytes / mib
+    }
+  }'
+}
+
+sizes_are_equivalent() {
+  local current_bytes="$1"
+  local target_bytes="$2"
+  local diff_bytes
+
+  if [[ "$current_bytes" -gt "$target_bytes" ]]; then
+    diff_bytes=$((current_bytes - target_bytes))
+  else
+    diff_bytes=$((target_bytes - current_bytes))
+  fi
+
+  [[ "$diff_bytes" -le "$SWAP_SIZE_TOLERANCE_BYTES" ]]
+}
+
 # Função para exibir o banner inicial
 exibir_banner() {
   echo -e "${GREEN}"
@@ -125,7 +169,7 @@ exibir_banner() {
 EOF
   echo -e "${NC}"
   log_msg green "Script de configuração de SWAP versão ${SCRIPT_VERSION}"
-  log_msg green "Desenvolvido por Paulo Rocha\n"
+  log_msg green "Desenvolvido por Codex (OpenAI), com direção e testes de Paulo Rocha\n"
 }
 
 # Função para exibir o menu de ajuda
@@ -155,6 +199,73 @@ is_swap_target_device() {
   target_real=$(readlink -f "$SWAP_TARGET_PATH" 2>/dev/null || echo "$SWAP_TARGET_PATH")
 
   [[ "$candidate_real" == "$target_real" ]]
+}
+
+normalize_fstab_swap_entries() {
+  local tmp_file
+  local line
+  local _source
+  local _mountpoint
+  local fstype
+  local removed_count=0
+  local duplicate_count=0
+  local updated_count=0
+  local target_entry_found=false
+  local target_line="$SWAP_TARGET_PATH none swap sw 0 0"
+
+  tmp_file=$(mktemp /etc/fstab.swap.XXXXXX) || error_exit "Falha ao criar arquivo temporário para atualizar /etc/fstab"
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" =~ ^[[:space:]]*# || "$line" =~ ^[[:space:]]*$ ]]; then
+      printf '%s\n' "$line" >>"$tmp_file"
+      continue
+    fi
+
+    read -r _source _mountpoint fstype _ <<<"$line"
+    if [[ "$fstype" == "swap" ]]; then
+      if [[ "$_source" == "$SWAP_TARGET_PATH" ]]; then
+        if [[ "$target_entry_found" == false ]]; then
+          printf '%s\n' "$target_line" >>"$tmp_file"
+          target_entry_found=true
+          [[ "$line" == "$target_line" ]] || updated_count=$((updated_count + 1))
+        else
+          duplicate_count=$((duplicate_count + 1))
+        fi
+        continue
+      fi
+      removed_count=$((removed_count + 1))
+      continue
+    fi
+
+    printf '%s\n' "$line" >>"$tmp_file"
+  done </etc/fstab
+
+  if [[ "$target_entry_found" == false ]]; then
+    printf '%s\n' "$target_line" >>"$tmp_file"
+  fi
+  chmod --reference=/etc/fstab "$tmp_file" 2>/dev/null || chmod 644 "$tmp_file"
+  if command -v chown >/dev/null 2>&1; then
+    chown --reference=/etc/fstab "$tmp_file" 2>/dev/null || true
+  fi
+
+  if cmp -s "$tmp_file" /etc/fstab; then
+    rm -f "$tmp_file"
+    log_msg green "✓ /etc/fstab já continha apenas a entrada de swap esperada: $SWAP_TARGET_PATH"
+    return
+  fi
+
+  mv "$tmp_file" /etc/fstab
+
+  if [[ $removed_count -gt 0 ]]; then
+    log_msg green "✓ Entradas antigas de swap removidas do /etc/fstab: $removed_count"
+  fi
+  if [[ $duplicate_count -gt 0 ]]; then
+    log_msg green "✓ Entradas duplicadas de swap removidas do /etc/fstab: $duplicate_count"
+  fi
+  if [[ $updated_count -gt 0 ]]; then
+    log_msg green "✓ Entrada de swap existente normalizada no /etc/fstab."
+  fi
+  log_msg green "✓ Entrada de swap aplicada no /etc/fstab: $SWAP_TARGET_PATH"
 }
 
 # Função para criar backup de um arquivo
@@ -290,14 +401,6 @@ create_swap_file() {
 
 exibir_banner
 
-# Tenta configurar o log
-if touch "$LOG_FILE" &>/dev/null; then
-  LOG_ENABLED=true
-  log_msg blue "Log habilitado. As saídas serão salvas em $LOG_FILE"
-else
-  log_msg yellow "Aviso: Não foi possível escrever em '$LOG_FILE'. O log estará desabilitado."
-fi
-
 # Processa argumentos da linha de comando
 custom_swap_size=""
 while [[ $# -gt 0 ]]; do
@@ -320,11 +423,19 @@ done
 if [[ $EUID -ne 0 ]]; then
   error_exit "Este script deve ser executado como root (use sudo)."
 fi
+
+# Tenta configurar o log
+if touch "$LOG_FILE" &>/dev/null; then
+  LOG_ENABLED=true
+  log_msg blue "Log habilitado. As saídas serão salvas em $LOG_FILE"
+else
+  log_msg yellow "Aviso: Não foi possível escrever em '$LOG_FILE'. O log estará desabilitado."
+fi
 log_msg green "✓ Verificação de privilégios administrativos bem-sucedida!"
 
 # Verifica comandos necessários
 log_msg blue "Verificando dependências..."
-for cmd in apt grep awk df dd stat mkswap swapon swapoff blkid readlink; do
+for cmd in apt grep awk df dd stat mkswap swapon swapoff blkid readlink mktemp cmp; do
   check_command "$cmd"
 done
 if ! command -v fallocate >/dev/null 2>&1; then
@@ -403,30 +514,28 @@ else
   log_msg green "✓ Estratégia de swap: arquivo em $SWAP_TARGET_PATH."
 fi
 
-# Desativa outras partições swap do tipo partition
-log_msg blue "Verificando partições de swap ativas..."
-if swapon --show=NAME,TYPE --noheadings 2>/dev/null | grep -q "partition"; then
-  log_msg yellow "Desativando partições de swap ativas..."
-  while IFS= read -r line; do
-    dev=$(echo "$line" | awk '$2 == "partition" { print $1 }')
-    if [[ -n "$dev" ]] && ! is_swap_target_device "$dev"; then
-      if swapoff "$dev" 2>/dev/null; then
-        log_msg yellow "✓ Swap desativado: $dev"
-        uuid=$(blkid -s UUID -o value "$dev" 2>/dev/null || true)
-        if [[ -n "$uuid" ]]; then
-          sed -i "/UUID=$uuid.*swap/d" /etc/fstab
-          log_msg yellow "✓ Entrada UUID removida do fstab"
-        fi
-        device_name=$(basename "$dev")
-        sed -i "/${device_name}.*swap/d" /etc/fstab
-        log_msg yellow "✓ Entrada do dispositivo removida do fstab"
-      else
-        log_msg yellow "⚠ Não foi possível desativar swap: $dev"
-      fi
-    fi
-  done < <(swapon --show=NAME,TYPE --noheadings 2>/dev/null)
-else
-  log_msg green "✓ Nenhuma partição de swap ativa encontrada."
+# Desativa qualquer swap ativo que não corresponda ao alvo escolhido
+log_msg blue "Verificando swaps ativos..."
+foreign_swap_found=false
+while IFS= read -r line; do
+  dev=$(echo "$line" | awk '{print $1}')
+  [[ -n "$dev" ]] || continue
+
+  if is_swap_target_device "$dev"; then
+    continue
+  fi
+
+  foreign_swap_found=true
+  log_msg yellow "Swap ativo fora do alvo detectado: $dev. Desativando..."
+  if swapoff "$dev" 2>/dev/null; then
+    log_msg yellow "✓ Swap desativado: $dev"
+  else
+    error_exit "Falha ao desativar swap ativo fora do alvo: $dev"
+  fi
+done < <(swapon --show=NAME --noheadings 2>/dev/null)
+
+if [[ "$foreign_swap_found" == false ]]; then
+  log_msg green "✓ Nenhum swap ativo fora do alvo encontrado."
 fi
 
 # Gerencia swap alvo
@@ -443,9 +552,13 @@ done < <(swapon --show --bytes --noheadings 2>/dev/null)
 if [[ -n "$current_swap_info" ]]; then
   current_swap_name=$(echo "$current_swap_info" | awk '{print $1}')
   current_swap_size=$(echo "$current_swap_info" | awk '{print $3}')
-  current_swap_gb=$((current_swap_size / 1024 / 1024 / 1024))
-  if [[ $current_swap_size -ne $swap_size_bytes ]]; then
-    log_msg yellow "Swap existente (${current_swap_gb}GB) é menor que o recomendado. Recriando..."
+  current_swap_human=$(format_bytes "$current_swap_size")
+  if ! sizes_are_equivalent "$current_swap_size" "$swap_size_bytes"; then
+    if [[ $current_swap_size -lt $swap_size_bytes ]]; then
+      log_msg yellow "Swap existente (${current_swap_human}) é menor que o alvo ($swap_size). Recriando..."
+    else
+      log_msg yellow "Swap existente (${current_swap_human}) é maior que o alvo ($swap_size). Recriando..."
+    fi
     if [[ "$SWAP_TARGET_KIND" == "file" ]]; then
       if swapoff "$current_swap_name" && rm -f "$SWAP_TARGET_PATH"; then
         create_swap_file "$swap_size" "$SWAP_TARGET_PATH"
@@ -461,7 +574,7 @@ if [[ -n "$current_swap_info" ]]; then
       log_msg green "✓ Volume ZFS de swap recriado com sucesso."
     fi
   else
-    log_msg green "✓ Swap existente (${current_swap_gb}GB) é adequado."
+    log_msg green "✓ Swap existente (${current_swap_human}) é adequado para o alvo ($swap_size)."
   fi
 else
   log_msg blue "Criando novo swap..."
@@ -484,15 +597,7 @@ fi
 
 # Configura /etc/fstab
 log_msg blue "Configurando /etc/fstab..."
-if [[ "$SWAP_TARGET_KIND" == "zvol" ]]; then
-  sed -i '\|/swapfile none swap|d' /etc/fstab
-fi
-if ! grep -Fq "$SWAP_TARGET_PATH none swap sw 0 0" /etc/fstab; then
-  echo "$SWAP_TARGET_PATH none swap sw 0 0" >>/etc/fstab
-  log_msg green "✓ Swap adicionado ao /etc/fstab: $SWAP_TARGET_PATH"
-else
-  log_msg green "✓ Swap já configurado no /etc/fstab: $SWAP_TARGET_PATH"
-fi
+normalize_fstab_swap_entries
 
 # Configura parâmetros de desempenho
 log_msg blue "Ajustando configurações de desempenho..."
@@ -522,10 +627,15 @@ log_msg green "✓ Sistema configurado para melhor desempenho."
 # Exibe resumo da configuração
 log_msg blue "=== RESUMO DA CONFIGURAÇÃO ==="
 log_msg green "RAM total: ${total_ram_mb}MB"
-log_msg green "Swap configurado: $swap_size em $SWAP_TARGET_PATH"
-log_msg green "Swappiness: 10 (baixo uso de swap)"
-log_msg green "VFS cache pressure: 50 (balanceado)"
+log_msg green "Backend: $SWAP_TARGET_KIND"
+log_msg green "Alvo: $SWAP_TARGET_PATH"
+log_msg green "Tamanho alvo: $swap_size"
+log_msg green "Swappiness: 10"
+log_msg green "VFS cache pressure: 50"
 log_msg blue "================================"
+log_msg blue "Validação rápida após a execução:"
+log_msg green "swapon --show"
+log_msg green "free -mh"
 
 # Solicita reinício com validação de entrada
 while true; do
