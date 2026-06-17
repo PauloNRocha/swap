@@ -13,6 +13,7 @@ Script em Bash para provisionar e ajustar SWAP em hosts Debian e Ubuntu. O fluxo
 - [Visão geral](#visão-geral)
 - [Compatibilidade](#compatibilidade)
 - [Escopo operacional](#escopo-operacional)
+- [Lógica de tamanho automático](#lógica-de-tamanho-automático)
 - [Pré-requisitos](#pré-requisitos)
 - [Operação](#operação)
 - [Fluxo de execução](#fluxo-de-execução)
@@ -57,6 +58,30 @@ Além da criação do swap, o script:
 - Evita recriar o swap quando a diferença de tamanho é apenas overhead operacional do `mkswap`.
 - Ajusta os parâmetros abaixo em `/etc/sysctl.conf`: `vm.swappiness=10`, `vm.vfs_cache_pressure=50`, `vm.dirty_ratio=15`, `vm.dirty_background_ratio=5`.
 - Cria backup de arquivos sensíveis antes de modificar a configuração.
+
+## Lógica de tamanho automático
+
+Quando `--size` não é informado, o script calcula um tamanho sugerido de swap com base na RAM total detectada no host.
+
+A escolha não segue a regra antiga de "swap = 2x RAM", porque essa regra costuma gerar valores exagerados em servidores modernos. Em vez disso, o script usa faixas conservadoras: hosts com pouca RAM recebem proporcionalmente mais swap, enquanto hosts com mais RAM recebem um limite mais controlado.
+
+| RAM detectada | Swap automático |
+|---:|---:|
+| até `512MB` | `1G` |
+| até `1GB` | `2G` |
+| até `2GB` | `3G` |
+| até `4GB` | `4G` |
+| até `8GB` | `6G` |
+| até `16GB` | `8G` |
+| acima de `16GB` | `16G` |
+
+Essa lógica atende bem a uso geral em Debian/Ubuntu, especialmente em servidores pequenos, VPS e hosts onde o objetivo é evitar ausência total de swap.
+
+O cálculo automático não tenta dimensionar swap para hibernação, banco de dados, virtualização pesada ou políticas específicas de produção. Nesses casos, defina o valor manualmente:
+
+```bash
+sudo ./swap.sh --size 4G
+```
 
 ## Pré-requisitos
 
