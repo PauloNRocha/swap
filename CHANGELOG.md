@@ -103,20 +103,12 @@
 
 - Refatora a estrutura do script para suportar os novos recursos de tamanho e log.
 
-### Problemas conhecidos
-
-- Esta versão foi publicada com um bug crítico de sintaxe e não é recomendada para uso. O problema foi corrigido na versão `1.5.1`.
-
 ## [1.4.3] - 2025-07-04
 
 ### Corrigido
 
 - Evita execução duplicada de `cleanup` em erros.
 - Valida `--size` mais cedo e interrompe a execução quando o formato é inválido.
-
-### Observações
-
-- A tag local de `1.4.3` aponta para o mesmo ponto do histórico de `1.5.1`.
 
 ## [1.4.2] - 2025-07-04
 
