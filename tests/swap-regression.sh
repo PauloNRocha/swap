@@ -256,6 +256,36 @@ run 0
 grep -qF "$SWAP_FILE none swap sw 0 0" "$FSTAB" || fail "swap automático não persistido"
 grep -qF "$SWAP_FILE 6442446848 " "$active" || fail "swap automático não ativado"
 
+setup noauto-arquivo-ausente
+printf '%s none swap sw,noauto 0 0\n' "$SWAP_FILE" >> "$FSTAB"
+cp -- "$FSTAB" "$case_dir/original"
+run 1 --size 8M
+grep -q 'noauto' "$case_dir/output" || fail "faltou explicar o bloqueio por noauto"
+assert_no_file
+assert_no_swap_commands
+assert_no_fstab_write
+[[ ! -s "$active" && ! -e "$SYSCTL_FILE" ]] || fail "noauto não deveria mudar a configuração"
+
+setup noauto-arquivo-inativo
+set_existing_file
+: > "$active"
+sed -i 's/sw,pri=5/sw,noauto,pri=5/' "$FSTAB"
+cp -- "$FSTAB" "$case_dir/original"
+run 1
+assert_no_swap_commands
+assert_no_fstab_write
+[[ -f "$SWAP_FILE" && ! -s "$active" && ! -e "$SYSCTL_FILE" ]] || fail "swap inativo deveria ser preservado"
+
+setup noauto-arquivo-ativo
+set_existing_file
+sed -i 's/sw,pri=5/sw,noauto,pri=5/' "$FSTAB"
+cp -- "$FSTAB" "$case_dir/original"
+cp -- "$active" "$case_dir/active.before"
+run 0 --size 8M
+assert_no_swap_commands
+assert_no_fstab_write
+cmp -s -- "$active" "$case_dir/active.before" || fail "swap já ativo deveria ser preservado"
+
 setup migracao-explicita
 set_lvs
 cp "$FSTAB" "$case_dir/original"

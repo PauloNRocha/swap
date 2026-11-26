@@ -604,8 +604,8 @@ main() {
   if [[ "$target_exists" == false && -n "$original_active" ]]; then
     error_exit "O swap ativo $original_active não pôde ser identificado no disco."
   fi
-  if [[ "$target_exists" == true && -z "$original_active" && ",$target_options," == *,noauto,* ]]; then
-    error_exit "O alvo já está no fstab com noauto. Preserve a configuração ou ative-o manualmente."
+  if [[ -z "$original_active" && ",$target_options," == *,noauto,* ]]; then
+    error_exit "O alvo $target está inativo e tem noauto no fstab. A configuração foi preservada."
   fi
 
   if [[ -z "$custom_size" ]]; then

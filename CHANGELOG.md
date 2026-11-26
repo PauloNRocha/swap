@@ -19,6 +19,7 @@
 - Verifica a ativação do novo swap antes de desativar swaps externos e tenta restaurar o estado anterior se a migração falhar.
 - Corrige a identificação de swaps ativos durante o rollback no Bash 5.2 do Debian 13.
 - Interrompe o fluxo quando o inventário de swaps falha e verifica espaço somente se houver nova alocação.
+- Respeita `noauto` no `/etc/fstab` e não cria nem ativa um alvo de swap inativo.
 - Restringe a limpeza no ZFS a um zvol criado na execução atual, com identidade verificada.
 - Persiste os ajustes de memória virtual em `/etc/sysctl.d/90-swap-script.conf` para o boot padrão do Debian 13.
 
