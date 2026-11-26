@@ -1,6 +1,6 @@
 # Provisionamento de SWAP para Debian e Ubuntu
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.5.8-blue.svg" alt="Versão">
+  <img src="https://img.shields.io/badge/version-1.5.9-blue.svg" alt="Versão">
   <img src="https://img.shields.io/badge/license-MIT-green.svg" alt="Licença">
   <img src="https://img.shields.io/badge/platform-Linux-lightgrey.svg" alt="Plataforma">
   <img src="https://img.shields.io/badge/shell-Bash-yellow.svg" alt="Shell">
@@ -19,6 +19,7 @@ Script em Bash para provisionar e ajustar SWAP em hosts Debian e Ubuntu. O fluxo
 - [Fluxo de execução](#fluxo-de-execução)
 - [Artefatos e alterações](#artefatos-e-alterações)
 - [Validação pós-execução](#validação-pós-execução)
+- [Testes de regressão](#testes-de-regressão)
 - [Limitações](#limitações)
 - [Observações operacionais](#observações-operacionais)
 - [Changelog](#changelog)
@@ -27,53 +28,51 @@ Script em Bash para provisionar e ajustar SWAP em hosts Debian e Ubuntu. O fluxo
 
 ## Visão geral
 
-O `swap.sh` automatiza uma rotina operacional comum em servidores: criar ou ajustar a área de swap com persistência no boot e com validações mínimas antes da aplicação. O comportamento atual cobre dois cenários:
+O `swap.sh` provisiona swap com persistência no boot. Por padrão, preserva áreas de swap já existentes em outros dispositivos ou arquivos.
 
-- Filesystems convencionais: usa `swapfile` em `/swapfile`.
-- Sistema raiz em ZFS: usa `zvol` em `/dev/zvol/<pool>/swap`.
+- Raiz em ext2, ext3, ext4 ou XFS: usa `/swapfile`. Se a raiz estiver em um LV, o arquivo ocupa espaço dentro do filesystem desse LV; o script não altera a estrutura do LVM.
+- Raiz em Btrfs: usa `/swapfile` com NOCOW e verifica se o arquivo atende às restrições de mapeamento do Btrfs.
+- Raiz em ZFS: usa `/dev/zvol/<pool>/swap`. Um volume existente só é reutilizado se tiver uma assinatura de swap válida; não é redimensionado pelo script.
 
 Além da criação do swap, o script:
 
-- cria backup dos arquivos de configuração alterados;
+- cria backup do `/etc/fstab` antes de alterá-lo;
 - atualiza o `/etc/fstab`;
-- ajusta parâmetros básicos de memória virtual em `/etc/sysctl.conf`;
-- registra a execução em `/var/log/swap_script.log`.
+- grava os ajustes de memória virtual em `/etc/sysctl.d/90-swap-script.conf` e tenta aplicá-los imediatamente;
+- registra mensagens de provisionamento em `/var/log/swap_script.log`.
 
 ## Compatibilidade
 
-- Debian e Ubuntu, ou distribuições compatíveis com `apt`.
+- Debian e Ubuntu. A persistência dos ajustes usa `sysctl.d`, pois o Debian 13 não carrega mais `/etc/sysctl.conf` no boot padrão.
 - Execução como `root` ou com `sudo`.
 - Suporte a ZFS no sistema raiz com criação de swap via `zvol`.
-- Suporte a tamanhos personalizados em megabytes (`M`) ou gigabytes (`G`), com sufixo em maiúsculas ou minúsculas.
+- Tamanhos personalizados em MiB (`M`) ou GiB (`G`), com sufixo em maiúsculas ou minúsculas.
 
 ## Escopo operacional
 
 - Detecta a quantidade de RAM instalada.
-- Define um tamanho sugerido de swap quando `--size` não é informado.
-- Verifica espaço disponível antes de tentar criar o swap.
-- Identifica se o sistema está em ZFS para usar `zvol` em vez de `swapfile`.
-- Desativa swaps antigos e remove entradas antigas do `/etc/fstab` quando necessário.
-- Cria e ativa o swap.
-- Normaliza o `/etc/fstab` para manter apenas uma entrada de swap persistente.
-- Evita recriar o swap quando a diferença de tamanho é apenas overhead operacional do `mkswap`.
-- Ajusta os parâmetros abaixo em `/etc/sysctl.conf`: `vm.swappiness=10`, `vm.vfs_cache_pressure=50`, `vm.dirty_ratio=15`, `vm.dirty_background_ratio=5`.
-- Cria backup de arquivos sensíveis antes de modificar a configuração.
+- Inventaria swaps ativos e persistentes antes de decidir o que fazer. Se o inventário falhar, não altera o swap.
+- Usa o tamanho automático para novas áreas de swap sem `--size`. Reaproveita o alvo existente por padrão.
+- Verifica espaço disponível apenas se precisar alocar um novo arquivo ou volume.
+- Com `--replace-existing`, migra swaps compatíveis registrados no `fstab`: confirma o novo swap antes de desativar os antigos e tenta reativá-los se a troca falhar.
+- Persiste o alvo no `fstab` sem modificar a configuração de outras montagens e sem alterar as permissões existentes do arquivo.
+- Configura `vm.swappiness=10`, `vm.vfs_cache_pressure=50`, `vm.dirty_ratio=15` e `vm.dirty_background_ratio=5` no arquivo dedicado em `sysctl.d`, sem editar `/etc/sysctl.conf`.
 
 ## Lógica de tamanho automático
 
-Quando `--size` não é informado, o script calcula um tamanho sugerido de swap com base na RAM total detectada no host.
+Quando precisa criar swap e `--size` não é informado, o script calcula um tamanho com base na RAM total detectada no host. Se o alvo já existir, seu tamanho é preservado.
 
 A escolha não segue a regra antiga de "swap = 2x RAM", porque essa regra costuma gerar valores exagerados em servidores modernos. Em vez disso, o script usa faixas conservadoras: hosts com pouca RAM recebem proporcionalmente mais swap, enquanto hosts com mais RAM recebem um limite mais controlado.
 
 | RAM detectada | Swap automático |
 |---:|---:|
-| até `512MB` | `1G` |
-| até `1GB` | `2G` |
-| até `2GB` | `3G` |
-| até `4GB` | `4G` |
-| até `8GB` | `6G` |
-| até `16GB` | `8G` |
-| acima de `16GB` | `16G` |
+| até `512 MiB` | `1G` |
+| até `1 GiB` | `2G` |
+| até `2 GiB` | `3G` |
+| até `4 GiB` | `4G` |
+| até `8 GiB` | `6G` |
+| até `16 GiB` | `8G` |
+| acima de `16 GiB` | `16G` |
 
 Essa lógica atende bem a uso geral em Debian/Ubuntu, especialmente em servidores pequenos, VPS e hosts onde o objetivo é evitar ausência total de swap.
 
@@ -88,6 +87,7 @@ sudo ./swap.sh --size 4G
 - Sistema baseado em Debian ou Ubuntu.
 - Permissões administrativas.
 - Espaço em disco suficiente para o tamanho de swap desejado.
+- Em ambientes Btrfs, pacote `btrfs-progs` com os subcomandos `filesystem mkswapfile` e `inspect-internal map-swapfile`.
 - Em ambientes ZFS, utilitário `zfs` disponível no sistema.
 
 ## Operação
@@ -114,6 +114,25 @@ sudo ./swap.sh --size 512M
 sudo ./swap.sh --size 2g
 ```
 
+Quando há um swap em LV, partição ou arquivo diferente do alvo, inclusive se estiver inativo mas constar no `fstab`, a execução normal não altera a configuração. `--size` por si só não autoriza a troca; ele pode redimensionar apenas o `/swapfile` que já for o alvo.
+
+Para verificar antes de decidir, execute estes comandos de leitura:
+
+```bash
+findmnt --noheadings --output SOURCE,FSTYPE --mountpoint /
+swapon --show=NAME,TYPE,SIZE,USED,PRIO
+findmnt --fstab --types swap --output SOURCE,OPTIONS
+sudo lvs -o vg_name,lv_name,lv_size,lv_attr  # Apenas se o host usa LVM
+```
+
+Se a troca for intencional, execute em janela de manutenção. O exemplo abaixo troca um swap compatível do `fstab` por um alvo de `4 GiB` e **não apaga nem redimensiona o LV antigo**:
+
+```bash
+sudo ./swap.sh --replace-existing --size 4G
+```
+
+O modo de migração não é um redimensionador de LVM. Ele recusa swaps ativos sem entrada correspondente no `fstab`, unidades independentes do systemd e configurações detectadas de hibernação ou swap criptografado. Nesses casos, planeje a troca manualmente.
+
 Ajuda:
 
 ```bash
@@ -124,28 +143,22 @@ sudo ./swap.sh --help
 
 Durante a execução, o script segue esta ordem:
 
-1. Valida privilégios administrativos.
-2. Verifica dependências necessárias.
-3. Cria backups de `/etc/fstab` e `/etc/sysctl.conf`.
-4. Detecta a RAM total e calcula ou valida o tamanho do swap.
-5. Verifica espaço disponível em disco.
-6. Define a estratégia de swap.
-   `swapfile` em `/swapfile` para filesystems comuns.
-   `zvol` em `/dev/zvol/<pool>/swap` quando `/` está em ZFS.
-7. Desativa swaps antigos que não correspondem ao alvo escolhido.
-8. Cria e ativa o novo swap.
-9. Atualiza o `/etc/fstab`.
-10. Ajusta parâmetros de desempenho em `/etc/sysctl.conf`.
-11. Exibe um resumo final e oferece a opção de reiniciar o sistema.
+1. Valida argumentos, privilégios e dependências e bloqueia execuções simultâneas.
+2. Identifica o backend, lê o `fstab` e lista os swaps ativos.
+3. Preserva swaps fora do alvo, salvo quando uma migração explícita é solicitada e passa pelas verificações.
+4. Reaproveita o alvo válido ou verifica o espaço e prepara uma nova área. Faz backup do `fstab` se houver mudança.
+5. Ativa e verifica o alvo. Na migração, desativa os swaps anteriores só depois dessa verificação.
+6. Atualiza o `fstab` e recarrega as unidades do systemd quando aplicável.
+7. Persiste e tenta aplicar os ajustes de memória virtual. Não solicita reinício.
 
 ## Artefatos e alterações
 
 Arquivos modificados pelo script:
 
 - `/etc/fstab`
-- `/etc/sysctl.conf`
+- `/etc/sysctl.d/90-swap-script.conf`
 
-Ao normalizar o `/etc/fstab`, o script mantém o arquivo com dono `root:root` e modo `0644`, padrão esperado em Debian/Ubuntu.
+O script preserva dono e permissões existentes do `fstab`. Se o arquivo dedicado de sysctl já contiver configuração diferente, não o sobrescreve.
 
 Artefatos criados pelo script:
 
@@ -153,38 +166,47 @@ Artefatos criados pelo script:
 - `/swapfile` em sistemas sem ZFS, quando esse for o backend escolhido
 - `/dev/zvol/<pool>/swap` em sistemas com ZFS
 
-Backups gerados automaticamente:
-
-- `/etc/fstab.backup.<data_hora>`
-- `/etc/sysctl.conf.backup.<data_hora>`
+Backup criado quando o `fstab` muda: `/etc/fstab.backup.<data_hora>.<sufixo>`.
 
 ## Validação pós-execução
 
 Após a aplicação, valide o estado final com:
 
 ```bash
-swapon --show
-free -mh
-grep -E 'swapfile|/dev/zvol/.*/swap' /etc/fstab
-tail -n 50 /var/log/swap_script.log
+swapon --show=NAME,TYPE,SIZE,USED,PRIO
+free -h
+findmnt --fstab --types swap --output SOURCE,OPTIONS
+sysctl vm.swappiness vm.vfs_cache_pressure vm.dirty_ratio vm.dirty_background_ratio
+sudo tail -n 50 /var/log/swap_script.log
 ```
 
 Resultado esperado:
 
-- `swapon --show` deve listar o swap ativo.
-- `free -mh` deve exibir swap total maior que zero.
-- O `/etc/fstab` deve conter apenas a entrada compatível com o backend em uso.
+- Se o script preservou um swap existente, a lista de dispositivos ativos e o `fstab` devem estar como antes.
+- Se houve provisionamento ou migração, o alvo deve constar nos swaps ativos e no `fstab`. O kernel pode mostrar o dispositivo real do zvol (por exemplo, `/dev/zd0`) em vez do alias em `/dev/zvol/`.
+- Se os ajustes foram aplicados, os valores lidos com `sysctl` devem ser os do arquivo dedicado. Para validar persistência, confira novamente após um reboot planejado. Outros arquivos de sysctl com maior precedência podem sobrescrevê-los no boot.
+
+## Testes de regressão
+
+```bash
+bash -n swap.sh
+shellcheck -x swap.sh tests/swap-regression.sh
+bash tests/swap-regression.sh
+```
+
+Execute sem `sudo`. Os testes usam fixtures e comandos simulados. Não ativam swaps reais nem alteram o `fstab` ou os parâmetros do host. A validação de boot e armazenamento real exige uma VM descartável.
 
 ## Limitações
 
-- O projeto é direcionado a ambientes com `apt`; outras distribuições não são alvo do script.
 - O foco é criação e ajuste inicial de swap, não gerenciamento avançado de múltiplos dispositivos.
+- Redimensionar um `/swapfile` existente exige espaço para manter o antigo e preparar o novo. O caminho final é o mesmo: há uma breve desativação do arquivo anterior, que é preservado para rollback. Se qualquer interrupção de swap for inaceitável, planeje a troca manualmente.
+- O script não redimensiona zvols. Em Btrfs, um arquivo ativo restringe snapshots do subvolume que o contém.
 - O script altera parâmetros de memória virtual com valores definidos no próprio código; se o seu ambiente tiver política própria de tuning, revise esses valores antes de usar em produção.
 
 ## Observações operacionais
 
 - Em hosts com ZFS, o backend de swap é `zvol`; não é usado `swapfile`.
-- O script altera configuração persistente do sistema e remove entradas antigas de swap do `/etc/fstab`. Revise o conteúdo de `/etc/fstab` e `/etc/sysctl.conf` se o host já possuir política própria de baseline.
+- Durante uma migração, se algum swap antigo não puder ser reativado no rollback, o script preserva o novo para manter capacidade de swap. Nessa situação, revise `swapon --show`, o `fstab` e os caminhos informados no erro antes de repetir a operação ou reiniciar.
 - O fluxo foi pensado para operação individual no host. Para automação em lote, o ideal é complementar com uma camada de orquestração e validação externa.
 
 ## Changelog
