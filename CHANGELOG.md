@@ -2,6 +2,26 @@
 
 ## [Não lançado]
 
+### Adicionado
+
+- Opção `--replace-existing` para migrar explicitamente swaps compatíveis registrados no `/etc/fstab`, inclusive em LVM.
+- Criação de arquivo de swap NOCOW em Btrfs e verificação de seu mapeamento.
+- Testes de regressão para preservação de swap, migração, rollback e colisões no ZFS.
+
+### Alterado
+
+- Preserva por padrão swaps fora do alvo e reutiliza o alvo existente sem redimensioná-lo quando `--size` não é informado.
+- Preserva os metadados do `/etc/fstab` ao atualizá-lo e não solicita reinício.
+- Não redimensiona nem recria zvols de swap existentes.
+
+### Corrigido
+
+- Verifica a ativação do novo swap antes de desativar swaps externos e tenta restaurar o estado anterior se a migração falhar.
+- Corrige a identificação de swaps ativos durante o rollback no Bash 5.2 do Debian 13.
+- Interrompe o fluxo quando o inventário de swaps falha e verifica espaço somente se houver nova alocação.
+- Restringe a limpeza no ZFS a um zvol criado na execução atual, com identidade verificada.
+- Persiste os ajustes de memória virtual em `/etc/sysctl.d/90-swap-script.conf` para o boot padrão do Debian 13.
+
 ## [1.5.8] - 2026-06-16
 
 ### Corrigido

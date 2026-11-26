@@ -1,159 +1,44 @@
 #!/bin/bash
+set -euo pipefail
 
-set -euo pipefail # Falha imediata em caso de erro
-
-# ==============================================================================
-# CONFIGURAÇÃO E VARIÁVEIS GLOBAIS
-# ==============================================================================
-SCRIPT_VERSION=1.5.8
+SCRIPT_VERSION=1.5.9
 LOG_FILE="/var/log/swap_script.log"
-LOG_ENABLED=false
-SWAP_TARGET_KIND="file"
-SWAP_TARGET_PATH="/swapfile"
-SWAP_ZVOL_DATASET=""
-SWAP_SIZE_TOLERANCE_BYTES=$((1024 * 1024))
-
-# Definir cores
+FSTAB="/etc/fstab"
+SYSCTL_FILE="/etc/sysctl.d/90-swap-script.conf"
+SWAP_FILE="/swapfile"
+ZVOL_DIR="/dev/zvol"
+LOCK_FILE="/run/swap-script.lock"
+CRYPTTAB="/etc/crypttab"
+CMDLINE="/proc/cmdline"
+INITRAMFS_DIR="/etc/initramfs-tools"
+SYSTEMD_DIR="/run/systemd/system"
+MEMINFO="/proc/meminfo"
 GREEN='\e[32m'
 NC='\e[0m'
 
-# ==============================================================================
-# DEFINIÇÃO DE FUNÇÕES
-# ==============================================================================
-
-# Função interna para exibir mensagens com cores
-_msg() {
+log_msg() {
   local color=$1
   shift
-  case $color in
-  "red") echo -e "\e[31m$*\e[0m" ;;
-  "green") echo -e "\e[32m$*\e[0m" ;;
-  "yellow") echo -e "\e[33m$*\e[0m" ;;
-  "blue") echo -e "\e[34m$*\e[0m" ;;
-  *) echo "$*" ;;
+  local code=
+  case "$color" in
+    red) code=31 ;;
+    green) code=32 ;;
+    yellow) code=33 ;;
+    blue) code=34 ;;
   esac
-}
-
-# Função principal para registrar mensagens no console e em arquivo de log
-log_msg() {
-  local color="$1"
-  shift
-  local message="$*"
-  local timestamp
-  timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-
-  _msg "$color" "$message"
-
-  if [[ "$LOG_ENABLED" = true ]]; then
-    local plain_message
-    plain_message="$message"
-    echo "[$timestamp] [$color] $plain_message" >>"$LOG_FILE"
+  if [[ -t 1 && -z "${NO_COLOR-}" && -n "$code" ]]; then
+    printf '\e[%sm%s\e[0m\n' "$code" "$*"
+  else
+    printf '%s\n' "$*"
+  fi
+  if [[ "${log_enabled:-false}" == true ]]; then
+    printf '[%s] [%s] %s\n' "$(date '+%F %T')" "$color" "$*" >> "$LOG_FILE" || :
   fi
 }
 
-# Função para tratamento de erros (chamada pelo trap)
 error_exit() {
-  log_msg red "ERRO: $1"
+  log_msg red "ERRO: $*" >&2
   exit 1
-}
-
-# Função de limpeza para reverter alterações (chamada pelo trap)
-cleanup() {
-  local exit_code=$?
-  local cleaned=false
-
-  [[ $exit_code -eq 0 ]] && return 0
-  trap - EXIT
-
-  if [[ -n "${swap_file_incomplete-}" && -f "$swap_file_incomplete" ]]; then
-    if [[ "$cleaned" == false ]]; then
-      log_msg yellow "Executando limpeza..."
-      cleaned=true
-    fi
-    rm -f "$swap_file_incomplete"
-    log_msg yellow "Arquivo de swap incompleto removido."
-  fi
-  if [[ -n "${swap_zvol_incomplete-}" ]] && command -v zfs >/dev/null 2>&1; then
-    if zfs list -H "$swap_zvol_incomplete" >/dev/null 2>&1; then
-      if [[ "$cleaned" == false ]]; then
-        log_msg yellow "Executando limpeza..."
-        cleaned=true
-      fi
-      zfs destroy -f "$swap_zvol_incomplete" >/dev/null 2>&1 || true
-      log_msg yellow "Volume ZFS de swap incompleto removido: $swap_zvol_incomplete"
-    fi
-  fi
-
-  exit "$exit_code"
-}
-
-# Trap para chamar a função de limpeza em caso de erro ou interrupção
-trap 'cleanup' EXIT
-
-# Função para converter tamanho (ex: 2G, 512M) para bytes
-parse_size_to_bytes() {
-  local size_str="$1"
-  local size_bytes
-  local num
-  local unit
-
-  if [[ ! "$size_str" =~ ^([0-9]+)([GgMm])$ ]]; then
-    error_exit "Formato de tamanho inválido: '$size_str'. Use um número seguido por 'G' ou 'M' (ex: 4G, 512M)."
-  fi
-
-  num=$(echo "$size_str" | sed -E 's/([0-9]+)([GgMm])/\1/')
-  unit=$(echo "$size_str" | sed -E 's/([0-9]+)([GgMm])/\2/' | tr '[:upper:]' '[:lower:]')
-
-  if [[ "$unit" == "g" ]]; then
-    size_bytes=$((num * 1024 * 1024 * 1024))
-  elif [[ "$unit" == "m" ]]; then
-    size_bytes=$((num * 1024 * 1024))
-  fi
-
-  echo "$size_bytes"
-}
-
-# Função para converter tamanho (ex: 2G, 512M) para MB
-parse_size_to_mb() {
-  local size_str="$1"
-  local size_mb
-
-  if [[ "$size_str" == *[Gg] ]]; then
-    size_mb=$(echo "$size_str" | sed -E 's/([0-9]+)[Gg]/\1/')
-    size_mb=$((size_mb * 1024))
-  else
-    size_mb=$(echo "$size_str" | sed -E 's/([0-9]+)[Mm]/\1/')
-  fi
-
-  echo "$size_mb"
-}
-
-format_bytes() {
-  local bytes="$1"
-
-  awk -v bytes="$bytes" 'BEGIN {
-    gib = 1024 * 1024 * 1024
-    mib = 1024 * 1024
-    if (bytes >= gib) {
-      printf "%.2fG", bytes / gib
-    } else {
-      printf "%.0fM", bytes / mib
-    }
-  }'
-}
-
-sizes_are_equivalent() {
-  local current_bytes="$1"
-  local target_bytes="$2"
-  local diff_bytes
-
-  if [[ "$current_bytes" -gt "$target_bytes" ]]; then
-    diff_bytes=$((current_bytes - target_bytes))
-  else
-    diff_bytes=$((target_bytes - current_bytes))
-  fi
-
-  [[ "$diff_bytes" -le "$SWAP_SIZE_TOLERANCE_BYTES" ]]
 }
 
 # Função para exibir o banner inicial
@@ -169,510 +54,679 @@ exibir_banner() {
 EOF
   echo -e "${NC}"
   log_msg green "Script de configuração de SWAP versão ${SCRIPT_VERSION}"
-  log_msg green "Desenvolvido por Codex (OpenAI), com direção e testes de Paulo Rocha\n"
+  log_msg green "Desenvolvido por Codex (OpenAI), com direção e testes de Paulo Rocha"
 }
 
-# Função para exibir o menu de ajuda
 exibir_ajuda() {
-  echo "Uso: $0 [opções]"
-  echo "Opções:"
-  echo "  --size <tamanho>  Define o tamanho do swap (ex: 2G, 512M)"
-  echo "  --help            Exibe este menu de ajuda"
-  exit 0
+  cat <<EOF_HELP
+Uso: $0 [opções]
+  --size <tamanho>     Define o tamanho (ex.: 2G, 512M).
+  --replace-existing  Autoriza migrar outros swaps registrados no /etc/fstab.
+                      Sem esta opção, swaps existentes fora do alvo são preservados.
+  --help              Exibe esta ajuda.
+EOF_HELP
 }
 
-# Função para validar se um comando existe
+require_root() {
+  [[ "$EUID" == 0 ]] || error_exit "Este script deve ser executado como root (use sudo)."
+}
+
 check_command() {
-  command -v "$1" >/dev/null 2>&1 || error_exit "Comando '$1' não encontrado"
+  command -v "$1" >/dev/null 2>&1 || error_exit "Comando '$1' não encontrado."
 }
 
-is_swap_target_device() {
-  local candidate="$1"
-  local candidate_real
-  local target_real
+parse_size_to_bytes() {
+  local input=$1 digits unit max
+  [[ "$input" =~ ^0*([1-9][0-9]*)([MmGg])$ ]] || return 1
+  digits=${BASH_REMATCH[1]}
+  case "${BASH_REMATCH[2]}" in
+    g|G) unit=$((1024 ** 3)) ;;
+    m|M) unit=$((1024 ** 2)) ;;
+  esac
+  # Mantém espaço para a margem de disco e evita overflow da aritmética do Bash.
+  max=$(( (1 << 50) / unit ))
+  (( ${#digits} <= ${#max} && digits <= max )) || return 1
+  printf '%s\n' "$(( digits * unit ))"
+}
 
-  if [[ "$candidate" == "$SWAP_TARGET_PATH" ]]; then
-    return 0
+automatic_size() {
+  local ram=$1
+  if   (( ram <= 512 ));   then echo 1G
+  elif (( ram <= 1024 ));  then echo 2G
+  elif (( ram <= 2048 ));  then echo 3G
+  elif (( ram <= 4096 ));  then echo 4G
+  elif (( ram <= 8192 ));  then echo 6G
+  elif (( ram <= 16384 )); then echo 8G
+  else echo 16G
   fi
-
-  candidate_real=$(readlink -f "$candidate" 2>/dev/null || echo "$candidate")
-  target_real=$(readlink -f "$SWAP_TARGET_PATH" 2>/dev/null || echo "$SWAP_TARGET_PATH")
-
-  [[ "$candidate_real" == "$target_real" ]]
 }
 
-ensure_fstab_permissions() {
-  local current_owner
-  local current_mode
-
-  current_owner=$(stat -c "%U:%G" /etc/fstab 2>/dev/null || echo "")
-  current_mode=$(stat -c "%a" /etc/fstab 2>/dev/null || echo "")
-
-  if [[ "$current_owner" == "root:root" && "$current_mode" == "644" ]]; then
-    return
-  fi
-
-  chown root:root /etc/fstab 2>/dev/null || error_exit "Falha ao ajustar dono de /etc/fstab para root:root"
-  chmod 644 /etc/fstab 2>/dev/null || error_exit "Falha ao ajustar permissões de /etc/fstab para 0644"
-  log_msg green "✓ Permissões do /etc/fstab ajustadas para root:root 0644."
+same_device() {
+  [[ "$1" == "$2" || ( -n "$1" && -n "$2" && "$1" -ef "$2" ) ]]
 }
 
-normalize_fstab_swap_entries() {
-  local tmp_file
-  local line
-  local _source
-  local _mountpoint
-  local fstype
-  local removed_count=0
-  local duplicate_count=0
-  local updated_count=0
-  local target_entry_found=false
-  local target_line="$SWAP_TARGET_PATH none swap sw 0 0"
+resolve_source() {
+  local source=$1
+  case "$source" in
+    /*) printf '%s\n' "$source" ;;
+    UUID=*|LABEL=*|PARTUUID=*|PARTLABEL=*) findfs "$source" 2>/dev/null ;;
+    *) return 1 ;;
+  esac
+}
 
-  tmp_file=$(mktemp /etc/fstab.swap.XXXXXX) || error_exit "Falha ao criar arquivo temporário para atualizar /etc/fstab"
+read_active_swaps() {
+  local table line device bytes priority extra
+  table=$(LC_ALL=C swapon --show=NAME,SIZE,PRIO --bytes --raw --noheadings) || return 1
+  active_devices=() active_sizes=() active_priorities=()
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    read -r device bytes priority extra <<< "$line"
+    # Recusa formatos ambíguos sem interpretar escapes do nome como argumentos.
+    [[ "$device" == /* && "$device" != *\\* && "$bytes" =~ ^[1-9][0-9]{0,17}$ &&
+       "$priority" =~ ^-?[0-9]{1,5}$ && -z "$extra" ]] || return 1
+    active_devices+=("$device")
+    active_sizes+=("$bytes")
+    active_priorities+=("$priority")
+  done <<< "$table"
+}
 
+active_index() {
+  local index
+  for index in "${!active_devices[@]}"; do
+    if same_device "${active_devices[index]}" "$1"; then
+      printf '%s\n' "$index" || return 1
+      # No trap EXIT, um return sem argumento pode herdar o status do trap.
+      return 0
+    fi
+  done
+  return 1
+}
+
+# O ponto final preserva as quebras de linha finais na substituição de comando.
+read_fstab() {
+  cat -- "$FSTAB" && printf .
+}
+
+analyze_fstab() {
+  local line source _mount type options _rest device
+  foreign_fstab=() foreign_fstab_devices=() foreign_fstab_options=()
+  target_entries=() target_options=sw
+  fstab_lines=()
   while IFS= read -r line || [[ -n "$line" ]]; do
-    if [[ "$line" =~ ^[[:space:]]*# || "$line" =~ ^[[:space:]]*$ ]]; then
-      printf '%s\n' "$line" >>"$tmp_file"
-      continue
+    fstab_lines+=("$line")
+    [[ "$line" =~ ^[[:space:]]*($|\#) ]] && continue
+    read -r source _mount type options _rest <<< "$line"
+    [[ "$type" == swap ]] || continue
+    device=
+    if [[ "$source" != *\\* ]]; then
+      device=$(resolve_source "$source") || device=
     fi
-
-    read -r _source _mountpoint fstype _ <<<"$line"
-    if [[ "$fstype" == "swap" ]]; then
-      if [[ "$_source" == "$SWAP_TARGET_PATH" ]]; then
-        if [[ "$target_entry_found" == false ]]; then
-          printf '%s\n' "$target_line" >>"$tmp_file"
-          target_entry_found=true
-          [[ "$line" == "$target_line" ]] || updated_count=$((updated_count + 1))
-        else
-          duplicate_count=$((duplicate_count + 1))
-        fi
-        continue
+    if same_device "$device" "$target"; then
+      if (( ${#target_entries[@]} == 0 )); then
+        target_options=${options:-sw}
       fi
-      removed_count=$((removed_count + 1))
-      continue
+      target_entries+=("$(("${#fstab_lines[@]}" - 1))")
+    else
+      foreign_fstab+=("$source")
+      foreign_fstab_devices+=("$device")
+      foreign_fstab_options+=("${options:-sw}")
     fi
+  done < <(printf '%s' "${original_fstab%.}")
+}
 
-    printf '%s\n' "$line" >>"$tmp_file"
-  done </etc/fstab
+is_block_device() {
+  [[ -b "$1" ]]
+}
 
-  if [[ "$target_entry_found" == false ]]; then
-    printf '%s\n' "$target_line" >>"$tmp_file"
+swap_signature() {
+  [[ "$(blkid -p -s TYPE -o value -- "$1")" == swap ]]
+}
+
+select_target() {
+  local root_source
+  fs_type=$(findmnt --mountpoint / --noheadings --output FSTYPE) ||
+    error_exit "Não foi possível identificar o sistema de arquivos raiz."
+  target=$SWAP_FILE
+  if [[ "$fs_type" == zfs ]]; then
+    check_command zfs
+    root_source=$(findmnt --mountpoint / --noheadings --output SOURCE) ||
+      error_exit "Não foi possível identificar o dataset raiz."
+    pool=${root_source%%/*}
+    [[ "$pool" =~ ^[[:alpha:]][[:alnum:]_.:-]*$ ]] || error_exit "Nome de pool ZFS inválido."
+    dataset=$pool/swap
+    target=$ZVOL_DIR/$dataset
   fi
-  chown root:root "$tmp_file" 2>/dev/null || error_exit "Falha ao ajustar dono do arquivo temporário do /etc/fstab"
-  chmod 644 "$tmp_file" 2>/dev/null || error_exit "Falha ao ajustar permissões do arquivo temporário do /etc/fstab"
+}
 
-  if cmp -s "$tmp_file" /etc/fstab; then
-    rm -f "$tmp_file"
-    ensure_fstab_permissions
-    log_msg green "✓ /etc/fstab já continha apenas a entrada de swap esperada: $SWAP_TARGET_PATH"
+inspect_target() {
+  local datasets name kind
+  target_exists=false
+  if [[ "$fs_type" == zfs ]]; then
+    datasets=$(zfs list -H -d 1 -o name,type "$pool") ||
+      error_exit "Falha ao listar datasets do pool $pool."
+    while IFS=$'\t' read -r name kind; do
+      [[ "$name" == "$dataset" ]] || continue
+      [[ "$kind" == volume ]] || error_exit "$dataset já existe e não é um zvol; nada será removido."
+      target_exists=true
+    done <<< "$datasets"
+    if [[ "$target_exists" == true ]]; then
+      is_block_device "$target" || error_exit "O dispositivo do zvol não está disponível: $target."
+    elif [[ -e "$target" || -L "$target" ]]; then
+      error_exit "O caminho $target já existe, mas não corresponde a um zvol esperado."
+    fi
+  elif [[ -e "$target" || -L "$target" ]]; then
+    [[ ! -L "$target" && -f "$target" && $(stat -c '%a:%h' -- "$target") == '600:1' && -O "$target" ]] ||
+      error_exit "$target deve ser um arquivo regular do root, modo 0600 e sem links."
+    target_exists=true
+  fi
+  if [[ "$target_exists" == true ]]; then
+    swap_signature "$target" || error_exit "$target não tem assinatura swap válida; nada será sobrescrito."
+  fi
+}
+
+migration_guards() {
+  local file settings name _source _key opts units line state unit active_source types source_fs target_fs
+  local -a resume_files=("$INITRAMFS_DIR/initramfs.conf" "$INITRAMFS_DIR/conf.d/"*)
+  settings=$(cat -- "$CMDLINE") || error_exit "Não foi possível ler os parâmetros do kernel."
+  if [[ "$settings" =~ (^|[[:space:]])resume(_offset)?= ]]; then
+    error_exit "Hibernação configurada no boot. Faça a migração de swap manualmente."
+  fi
+  for file in "${resume_files[@]}"; do
+    [[ -f "$file" ]] || continue
+    settings=$(sed -nE '/^[[:space:]]*(export[[:space:]]+)?RESUME[[:space:]]*=/p' "$file") ||
+      error_exit "Não foi possível ler $file."
+    while IFS= read -r line; do
+      [[ -z "$line" || "$line" =~ ^[[:space:]]*(export[[:space:]]+)?RESUME[[:space:]]*=[[:space:]]*[\"\']?(none|auto)?[\"\']?([[:space:]]*\#.*|[[:space:]]*)$ ]] ||
+        error_exit "Hibernação configurada em $file. Faça a migração manualmente."
+    done <<< "$settings"
+  done
+  if [[ -f "$CRYPTTAB" ]]; then
+    while read -r name _source _key opts _ || [[ -n "$name" ]]; do
+      [[ -z "$name" || "$name" == \#* ]] && continue
+      [[ ",$opts," != *,swap,* ]] || error_exit "Swap gerenciado por crypttab. Faça a migração manualmente."
+    done < "$CRYPTTAB"
+  fi
+  # A migração por fstab não pode suprimir unidades administradas separadamente.
+  if [[ -d "$SYSTEMD_DIR" ]]; then
+    units=$(systemctl list-unit-files --type=swap --no-legend --no-pager) ||
+      error_exit "Não foi possível inventariar as unidades de swap do systemd."
+    while read -r unit state _; do
+      [[ -n "$unit" ]] || continue
+      [[ "$state" == generated ]] ||
+        error_exit "Unidade de swap independente ($unit). Faça a migração manualmente."
+      active_source=$(systemctl show --property=SourcePath --value -- "$unit") ||
+        error_exit "Não foi possível verificar a origem de $unit."
+      [[ "$active_source" == "$FSTAB" ]] ||
+        error_exit "Unidade de swap não gerada pelo fstab ($unit). Faça a migração manualmente."
+    done <<< "$units"
+  fi
+  for active_source in "${foreign_fstab_devices[@]}"; do
+    if [[ -z "$active_source" || "$active_source" == *[[:space:]\\]* ]] ||
+       { [[ ! -f "$active_source" ]] && ! is_block_device "$active_source"; } ||
+       ! swap_signature "$active_source"; then
+      error_exit "O fstab contém um swap inacessível ou não reconhecido. Revise a entrada antes de migrar."
+    fi
+    if is_block_device "$active_source"; then
+      types=$(lsblk --inverse --raw --noheadings --output TYPE -- "$active_source") ||
+        error_exit "Não foi possível verificar a cadeia de dispositivos de $active_source."
+      [[ -n "$types" ]] || error_exit "Cadeia de dispositivos vazia para $active_source."
+      if grep -qx '[[:space:]]*crypt[[:space:]]*' <<< "$types"; then
+        error_exit "Swap em dispositivo criptografado ($active_source). Faça a migração manualmente."
+      fi
+    else
+      source_fs=$(stat -Lc %d -- "$active_source") || error_exit "Não foi possível verificar $active_source."
+      target_fs=$(stat -c %d -- "${target%/*}/") || error_exit "Não foi possível verificar o filesystem de $target."
+      [[ "$source_fs" == "$target_fs" ]] ||
+        error_exit "Swap em outro sistema de arquivos ($active_source). Faça a migração manualmente."
+    fi
+  done
+}
+
+check_space() {
+  local bytes required
+  if [[ "$fs_type" == zfs ]]; then
+    bytes=$(zfs get -Hp -o value available "$pool") || error_exit "Falha ao consultar espaço no pool ZFS."
+  else
+    bytes=$(df -B1 --output=avail -- "${target%/*}/" | awk 'NR == 2 {print $1}') ||
+      error_exit "Falha ao consultar espaço no sistema de arquivos."
+  fi
+  [[ "$bytes" =~ ^[0-9]{1,18}$ ]] || error_exit "Valor de espaço disponível inválido."
+  required=$((size_bytes + size_bytes / 5 + 1024 ** 3))
+  (( bytes >= required )) ||
+    error_exit "Espaço insuficiente: disponíveis $bytes bytes, necessários $required bytes (com margem)."
+}
+
+prepare_swapfile() {
+  local use_dd=${1:-false}
+  if [[ -z "$work_dir" ]]; then
+    work_dir=$(mktemp -d -- "${target}.work.XXXXXX") || error_exit "Falha ao criar diretório temporário."
+  fi
+  staged_file=$work_dir/next
+  prepared_with_dd=false
+  if [[ "$fs_type" == btrfs ]]; then
+    btrfs filesystem mkswapfile --size "$size_bytes" "$staged_file" ||
+      error_exit "Falha ao preparar o arquivo NOCOW no Btrfs."
+    chmod 600 -- "$staged_file"
+    btrfs inspect-internal map-swapfile "$staged_file" >/dev/null ||
+      error_exit "O Btrfs não pôde mapear o arquivo de swap."
     return
   fi
 
-  mv "$tmp_file" /etc/fstab
-  ensure_fstab_permissions
-
-  if [[ $removed_count -gt 0 ]]; then
-    log_msg green "✓ Entradas antigas de swap removidas do /etc/fstab: $removed_count"
+  : > "$staged_file"
+  chmod 600 -- "$staged_file"
+  if [[ "$use_dd" == true ]] || ! fallocate -l "$size_bytes" -- "$staged_file" 2>/dev/null; then
+    prepared_with_dd=true
+    dd if=/dev/zero of="$staged_file" bs=1M count="$((size_bytes / 1024 ** 2))" status=none ||
+      error_exit "Falha ao alocar o arquivo de swap com dd."
   fi
-  if [[ $duplicate_count -gt 0 ]]; then
-    log_msg green "✓ Entradas duplicadas de swap removidas do /etc/fstab: $duplicate_count"
-  fi
-  if [[ $updated_count -gt 0 ]]; then
-    log_msg green "✓ Entrada de swap existente normalizada no /etc/fstab."
-  fi
-  log_msg green "✓ Entrada de swap aplicada no /etc/fstab: $SWAP_TARGET_PATH"
+  mkswap -- "$staged_file" >/dev/null || error_exit "Falha ao inicializar o arquivo de swap."
 }
 
-# Função para criar backup de um arquivo
-backup_file() {
-  local file_path="$1"
-  if [[ -f "$file_path" ]]; then
-    local backup_path
-    backup_path="${file_path}.backup.$(date +%Y%m%d_%H%M%S)"
-    if cp "$file_path" "$backup_path"; then
-      log_msg green "✓ Backup de $file_path criado em $backup_path"
-    else
-      error_exit "Falha ao criar backup de $file_path"
-    fi
-  fi
-}
-
-# Função para criar o arquivo de swap
-create_swap_file_with_dd() {
-  local size_str="$1"
-  local file_path="$2"
-  local size_mb
-
-  size_mb=$(parse_size_to_mb "$size_str")
-  if dd if=/dev/zero of="$file_path" bs=1M count="$size_mb" status=none >/dev/null 2>&1; then
-    log_msg green "✓ Arquivo de swap criado com dd."
-  else
-    error_exit "Falha ao criar arquivo de swap com dd"
-  fi
-}
-
-detect_zfs_pool_for_root() {
-  local root_dataset
-  local pool_name
-
-  root_dataset=$(zfs list -H -o name / 2>/dev/null || true)
-  if [[ -z "$root_dataset" ]]; then
-    root_dataset=$(findmnt -n -o SOURCE / 2>/dev/null || true)
-  fi
-  [[ -n "$root_dataset" ]] || return 1
-
-  pool_name="${root_dataset%%/*}"
-  [[ -n "$pool_name" ]] || return 1
-
-  echo "$pool_name"
-}
-
-create_swap_zvol() {
-  local size_str="$1"
-  local dataset="$2"
-  local device_path="/dev/zvol/$dataset"
+create_zvol() {
   local page_size
-  local existing_type
+  page_size=$(getconf PAGESIZE) || error_exit "Não foi possível obter o tamanho de página do kernel."
+  zfs create -V "$size_bytes" -b "$page_size" \
+    -o compression=zle -o logbias=throughput -o sync=always \
+    -o primarycache=metadata -o secondarycache=none -o com.sun:auto-snapshot=false \
+    "$dataset" || error_exit "Falha ao criar o zvol $dataset."
+  zvol_created=true
+  zvol_guid=$(zfs get -Hp -o value guid "$dataset") ||
+    error_exit "Não foi possível confirmar a identidade do zvol recém-criado: $dataset."
+  [[ "$zvol_guid" =~ ^[0-9]+$ ]] || error_exit "Identificador inválido para o zvol $dataset."
 
-  page_size=$(getconf PAGESIZE 2>/dev/null || echo 4096)
-
-  log_msg blue "Criando volume ZFS de swap ($dataset) com tamanho $size_str..."
-  swap_zvol_incomplete="$dataset"
-
-  if zfs list -H "$dataset" >/dev/null 2>&1; then
-    existing_type=$(zfs get -H -o value type "$dataset" 2>/dev/null || true)
-    if [[ "$existing_type" != "volume" ]]; then
-      error_exit "O dataset $dataset existe e não é um volume ZFS. Defina manualmente outro nome para swap."
-    fi
-    log_msg yellow "Volume ZFS $dataset já existe. Recriando..."
-    swapoff "$device_path" >/dev/null 2>&1 || true
-    zfs destroy -f "$dataset" >/dev/null 2>&1 || error_exit "Falha ao remover volume ZFS antigo: $dataset"
+  if command -v udevadm >/dev/null; then
+    udevadm settle --timeout=10 || :
   fi
-
-  zfs create -V "$size_str" -b "$page_size" \
-    -o compression=zle \
-    -o logbias=throughput \
-    -o sync=always \
-    -o primarycache=metadata \
-    -o secondarycache=none \
-    -o com.sun:auto-snapshot=false \
-    "$dataset" >/dev/null 2>&1 || error_exit "Falha ao criar volume ZFS de swap: $dataset"
-
-  if command -v udevadm >/dev/null 2>&1; then
-    udevadm settle >/dev/null 2>&1 || true
-  fi
-
   for _ in {1..20}; do
-    [[ -b "$device_path" ]] && break
+    is_block_device "$target" && break
     sleep 0.2
   done
-  [[ -b "$device_path" ]] || error_exit "Dispositivo de swap ZFS não encontrado: $device_path"
-
-  mkswap "$device_path" >/dev/null 2>&1 || error_exit "Falha ao inicializar assinatura de swap em $device_path"
-  swapon "$device_path" >/dev/null 2>&1 || error_exit "Falha ao ativar swap em $device_path"
-
-  swap_zvol_incomplete=""
+  is_block_device "$target" || error_exit "Dispositivo não encontrado: $target."
+  mkswap -- "$target" >/dev/null || error_exit "Falha ao inicializar o zvol $dataset."
 }
 
-create_swap_file() {
-  local size_str="$1"
-  local file_path="$2"
-  local created_with_dd=false
-  local swapon_output=""
-
-  log_msg blue "Criando arquivo de swap com tamanho $size_str..."
-  swap_file_incomplete="$file_path"
-
-  if fallocate -l "$size_str" "$file_path" >/dev/null 2>&1; then
-    log_msg green "✓ Arquivo de swap criado com fallocate."
-  else
-    log_msg yellow "fallocate não suportado ou falhou. Usando dd como alternativa (pode ser mais lento)..."
-    create_swap_file_with_dd "$size_str" "$file_path"
-    created_with_dd=true
-  fi
-
-  chmod 600 "$file_path"
-  mkswap "$file_path" >/dev/null 2>&1 || error_exit "Falha ao inicializar assinatura de swap em $file_path"
-
-  if ! swapon_output=$(swapon "$file_path" 2>&1); then
-    if echo "$swapon_output" | grep -qi "holes" && [[ "$created_with_dd" == false ]]; then
-      log_msg yellow "swapon detectou arquivo com holes após fallocate. Recriando com dd..."
-      rm -f "$file_path"
-      create_swap_file_with_dd "$size_str" "$file_path"
-      chmod 600 "$file_path"
-      mkswap "$file_path" >/dev/null 2>&1 || error_exit "Falha ao inicializar assinatura de swap em $file_path"
-      swapon_output=$(swapon "$file_path" 2>&1) || error_exit "Falha ao ativar swap após recriação com dd: $swapon_output"
-    else
-      error_exit "Falha ao ativar swap em $file_path: $swapon_output"
-    fi
-  fi
-
-  swap_file_incomplete=""
+install_staged_file() {
+  installed_id=$(stat -c '%d:%i' -- "$staged_file") || error_exit "Falha ao identificar o arquivo de swap preparado."
+  mv -T --no-clobber -- "$staged_file" "$target" && [[ ! -e "$staged_file" ]] ||
+    error_exit "Não foi possível instalar o novo arquivo de swap: $target."
+  file_installed=true
 }
 
-# ==============================================================================
-# LÓGICA PRINCIPAL
-# ==============================================================================
-
-exibir_banner
-
-# Processa argumentos da linha de comando
-custom_swap_size=""
-while [[ $# -gt 0 ]]; do
-  key="$1"
-  case $key in
-  --size)
-    custom_swap_size="$2"
-    shift 2
-    ;;
-  --help)
-    exibir_ajuda
-    ;;
-  *)
-    error_exit "Opção inválida: $1. Use --help para ver as opções."
-    ;;
-  esac
-done
-
-# Verifica se é executado como root
-if [[ $EUID -ne 0 ]]; then
-  error_exit "Este script deve ser executado como root (use sudo)."
-fi
-
-# Tenta configurar o log
-if touch "$LOG_FILE" &>/dev/null; then
-  LOG_ENABLED=true
-  log_msg blue "Log habilitado. As saídas serão salvas em $LOG_FILE"
-else
-  log_msg yellow "Aviso: Não foi possível escrever em '$LOG_FILE'. O log estará desabilitado."
-fi
-log_msg green "✓ Verificação de privilégios administrativos bem-sucedida!"
-
-# Verifica comandos necessários
-log_msg blue "Verificando dependências..."
-for cmd in apt grep awk df dd stat mkswap swapon swapoff blkid readlink mktemp cmp; do
-  check_command "$cmd"
-done
-if ! command -v fallocate >/dev/null 2>&1; then
-  log_msg yellow "Aviso: fallocate não encontrado. O script usará dd para criar o arquivo de swap."
-fi
-log_msg green "✓ Todas as dependências estão disponíveis."
-
-# Verifica se o sistema usa apt
-if ! command -v apt &>/dev/null; then
-  error_exit "Este script é compatível apenas com sistemas baseados em Debian/Ubuntu (apt)."
-fi
-
-# --- ETAPA DE BACKUP ---
-log_msg blue "Criando backups dos arquivos de configuração originais..."
-backup_file "/etc/fstab"
-backup_file "/etc/sysctl.conf"
-log_msg green "✓ Backups concluídos."
-
-# Detecta quantidade de RAM
-log_msg blue "Detectando quantidade de RAM..."
-if [[ ! -r /proc/meminfo ]]; then
-  error_exit "Não foi possível ler informações de memória."
-fi
-
-total_ram_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-if [[ -z "$total_ram_kb" || ! "$total_ram_kb" =~ ^[0-9]+$ ]]; then
-  error_exit "Não foi possível detectar a quantidade de RAM."
-fi
-
-total_ram_mb=$((total_ram_kb / 1024))
-
-# Define tamanho do swap
-if [[ -n "$custom_swap_size" ]]; then
-  parse_size_to_bytes "$custom_swap_size" >/dev/null
-  swap_size="$custom_swap_size"
-  log_msg blue "Tamanho do swap definido pelo usuário: $swap_size"
-else
-  if [[ $total_ram_mb -le 512 ]]; then swap_size="1G"
-  elif [[ $total_ram_mb -le 1024 ]]; then swap_size="2G"
-  elif [[ $total_ram_mb -le 2048 ]]; then swap_size="3G"
-  elif [[ $total_ram_mb -le 4096 ]]; then swap_size="4G"
-  elif [[ $total_ram_mb -le 8192 ]]; then swap_size="6G"
-  elif [[ $total_ram_mb -le 16384 ]]; then swap_size="8G"
-  else swap_size="16G"
+activation_args() {
+  local options=$1 priority=$2 opt
+  local -a tokens
+  swap_args=()
+  IFS=, read -ra tokens <<< "$options"
+  for opt in "${tokens[@]}"; do
+    case "$opt" in
+      discard) swap_args+=(--discard) ;;
+      discard=once|discard=pages) swap_args+=("--$opt") ;;
+      pri=*) [[ -n "$priority" ]] || swap_args+=(--priority "${opt#pri=}") ;;
+    esac
+  done
+  if [[ -n "$priority" && "$priority" != -* ]]; then
+    swap_args+=(--priority "$priority")
   fi
-  log_msg green "✓ RAM detectada: ${total_ram_mb}MB. Tamanho do swap proposto: ${swap_size}."
-fi
+}
 
-swap_size_bytes=$(parse_size_to_bytes "$swap_size")
-
-# Verifica espaço em disco
-log_msg blue "Verificando espaço em disco..."
-available_space_bytes=$(df --block-size=1 / | awk 'NR==2 {print $4}')
-required_space=$((swap_size_bytes + swap_size_bytes / 5 + 1024 * 1024 * 1024))
-
-if [[ $available_space_bytes -lt $required_space ]]; then
-  available_gb=$((available_space_bytes / 1024 / 1024 / 1024))
-  required_gb=$((required_space / 1024 / 1024 / 1024))
-  error_exit "Espaço insuficiente. Disponível: ${available_gb}GB, Necessário: ${required_gb}GB"
-fi
-log_msg green "✓ Espaço em disco suficiente."
-
-# Define estratégia de swap
-log_msg blue "Definindo estratégia de swap..."
-root_fs_type=$(stat -f -c %T / 2>/dev/null || echo "desconhecido")
-if [[ "$root_fs_type" == "zfs" ]]; then
-  check_command zfs
-  zfs_pool=$(detect_zfs_pool_for_root) || error_exit "Não foi possível identificar o pool ZFS do sistema raiz."
-  SWAP_TARGET_KIND="zvol"
-  SWAP_ZVOL_DATASET="${zfs_pool}/swap"
-  SWAP_TARGET_PATH="/dev/zvol/${SWAP_ZVOL_DATASET}"
-  log_msg yellow "Filesystem raiz ZFS detectado. Será usado volume ZFS de swap: $SWAP_TARGET_PATH"
-else
-  SWAP_TARGET_KIND="file"
-  SWAP_TARGET_PATH="/swapfile"
-  log_msg green "✓ Estratégia de swap: arquivo em $SWAP_TARGET_PATH."
-fi
-
-# Desativa qualquer swap ativo que não corresponda ao alvo escolhido
-log_msg blue "Verificando swaps ativos..."
-foreign_swap_found=false
-while IFS= read -r line; do
-  dev=$(echo "$line" | awk '{print $1}')
-  [[ -n "$dev" ]] || continue
-
-  if is_swap_target_device "$dev"; then
-    continue
-  fi
-
-  foreign_swap_found=true
-  log_msg yellow "Swap ativo fora do alvo detectado: $dev. Desativando..."
-  if swapoff "$dev" 2>/dev/null; then
-    log_msg yellow "✓ Swap desativado: $dev"
-  else
-    error_exit "Falha ao desativar swap ativo fora do alvo: $dev"
-  fi
-done < <(swapon --show=NAME --noheadings 2>/dev/null)
-
-if [[ "$foreign_swap_found" == false ]]; then
-  log_msg green "✓ Nenhum swap ativo fora do alvo encontrado."
-fi
-
-# Gerencia swap alvo
-log_msg blue "Verificando swap existente..."
-current_swap_info=""
-while IFS= read -r line; do
-  active_swap_name=$(echo "$line" | awk '{print $1}')
-  if is_swap_target_device "$active_swap_name"; then
-    current_swap_info="$line"
-    break
-  fi
-done < <(swapon --show --bytes --noheadings 2>/dev/null)
-
-if [[ -n "$current_swap_info" ]]; then
-  current_swap_name=$(echo "$current_swap_info" | awk '{print $1}')
-  current_swap_size=$(echo "$current_swap_info" | awk '{print $3}')
-  current_swap_human=$(format_bytes "$current_swap_size")
-  if ! sizes_are_equivalent "$current_swap_size" "$swap_size_bytes"; then
-    if [[ $current_swap_size -lt $swap_size_bytes ]]; then
-      log_msg yellow "Swap existente (${current_swap_human}) é menor que o alvo ($swap_size). Recriando..."
-    else
-      log_msg yellow "Swap existente (${current_swap_human}) é maior que o alvo ($swap_size). Recriando..."
+find_fstab_options() {
+  local device=$1 index
+  for index in "${!foreign_fstab_devices[@]}"; do
+    if same_device "$device" "${foreign_fstab_devices[index]}"; then
+      printf '%s\n' "${foreign_fstab_options[index]}"
+      return
     fi
-    if [[ "$SWAP_TARGET_KIND" == "file" ]]; then
-      if swapoff "$current_swap_name" && rm -f "$SWAP_TARGET_PATH"; then
-        create_swap_file "$swap_size" "$SWAP_TARGET_PATH"
-        log_msg green "✓ Arquivo de swap recriado com sucesso."
-      else
-        error_exit "Falha ao remover swap existente"
+  done
+  return 1
+}
+
+deactivate_old() {
+  local device=$1 priority=$2 options=$3
+  off_devices+=("$device") off_priorities+=("$priority") off_options+=("$options")
+  swapoff -- "$device" || error_exit "Falha ao desativar $device."
+}
+
+prepare_fstab() {
+  local line _source _mount type _rest index target_index found=false keep
+  fstab_tmp=$(mktemp -- "${FSTAB}.swap.XXXXXX") || error_exit "Falha ao preparar o fstab."
+  cp --attributes-only --preserve=all -- "$FSTAB" "$fstab_tmp" ||
+    error_exit "Falha ao preservar os metadados do fstab."
+  {
+    for index in "${!fstab_lines[@]}"; do
+      line=${fstab_lines[index]}
+      if [[ ! "$line" =~ ^[[:space:]]*($|\#) ]]; then
+        read -r _source _mount type _rest <<< "$line"
+        if [[ "$type" == swap ]]; then
+          keep=false
+          for target_index in "${target_entries[@]}"; do
+            if [[ "$index" == "$target_index" ]]; then
+              keep=true
+              break
+            fi
+          done
+          if [[ "$keep" == true && "$found" == false ]]; then
+            printf '%s\n' "$line"
+            found=true
+            continue
+          fi
+          [[ "$replace" == true || "$keep" == true ]] && continue
+        fi
       fi
-    else
-      if ! swapoff "$current_swap_name" 2>/dev/null; then
-        error_exit "Falha ao desativar swap existente em $SWAP_TARGET_PATH"
-      fi
-      create_swap_zvol "$swap_size" "$SWAP_ZVOL_DATASET"
-      log_msg green "✓ Volume ZFS de swap recriado com sucesso."
-    fi
-  else
-    log_msg green "✓ Swap existente (${current_swap_human}) é adequado para o alvo ($swap_size)."
-  fi
-else
-  log_msg blue "Criando novo swap..."
-  if [[ "$SWAP_TARGET_KIND" == "file" ]]; then
-    if [[ -f "$SWAP_TARGET_PATH" ]]; then
-      log_msg yellow "Arquivo $SWAP_TARGET_PATH existe mas não está ativo. Removendo..."
-      rm -f "$SWAP_TARGET_PATH"
-    fi
-    create_swap_file "$swap_size" "$SWAP_TARGET_PATH"
-    log_msg green "✓ Arquivo de swap criado e ativado com sucesso."
-  else
-    if [[ -f /swapfile ]]; then
-      log_msg yellow "Arquivo /swapfile detectado em sistema ZFS. Removendo para evitar conflitos..."
-      rm -f /swapfile
-    fi
-    create_swap_zvol "$swap_size" "$SWAP_ZVOL_DATASET"
-    log_msg green "✓ Volume ZFS de swap criado e ativado com sucesso."
-  fi
-fi
-
-# Configura /etc/fstab
-log_msg blue "Configurando /etc/fstab..."
-normalize_fstab_swap_entries
-
-# Configura parâmetros de desempenho
-log_msg blue "Ajustando configurações de desempenho..."
-if [[ ! -f /etc/sysctl.conf ]]; then
-  touch /etc/sysctl.conf
-fi
-declare -A sysctl_params=(
-  ["vm.swappiness"]="10"
-  ["vm.vfs_cache_pressure"]="50"
-  ["vm.dirty_ratio"]="15"
-  ["vm.dirty_background_ratio"]="5"
-)
-for param in "${!sysctl_params[@]}"; do
-  value="${sysctl_params[$param]}"
-  param_line="$param=$value"
-  if grep -q "^$param=" /etc/sysctl.conf; then
-    sed -i "s/^$param=.*/$param_line/" /etc/sysctl.conf
-    log_msg green "✓ Parâmetro $param atualizado para $value."
-  else
-    echo "$param_line" >>/etc/sysctl.conf
-    log_msg green "✓ Parâmetro $param=$value adicionado."
-  fi
-  sysctl "$param_line" >/dev/null 2>&1 || log_msg yellow "⚠ Aviso: Não foi possível aplicar $param_line imediatamente"
-done
-log_msg green "✓ Sistema configurado para melhor desempenho."
-
-# Exibe resumo da configuração
-log_msg blue "=== RESUMO DA CONFIGURAÇÃO ==="
-log_msg green "RAM total: ${total_ram_mb}MB"
-log_msg green "Backend: $SWAP_TARGET_KIND"
-log_msg green "Alvo: $SWAP_TARGET_PATH"
-log_msg green "Tamanho alvo: $swap_size"
-log_msg green "Swappiness: 10"
-log_msg green "VFS cache pressure: 50"
-log_msg blue "================================"
-log_msg blue "Validação rápida após a execução:"
-log_msg green "swapon --show"
-log_msg green "free -mh"
-
-# Solicita reinício com validação de entrada
-while true; do
-  read -rp "$(_msg blue 'Deseja reiniciar o sistema agora para aplicar todas as configurações? [s/N]: ')" resposta
-  resposta=${resposta,,}
-  if [[ "$resposta" =~ ^(s|sim|y|yes)$ ]]; then
-    log_msg blue "Reiniciando o sistema em 10 segundos..."
-    log_msg yellow "Pressione Ctrl+C para cancelar..."
-    for ((i = 10; i >= 1; i--)); do
-      printf "\rReiniciando em %d segundos... " "$i"
-      sleep 1
+      printf '%s\n' "$line"
     done
-    log_msg blue "\nReiniciando agora..."
-    reboot
-    break
-  elif [[ "$resposta" =~ ^(n|nao|no)?$ ]]; then
-    log_msg yellow "Reinício cancelado."
-    log_msg blue "Para aplicar todas as configurações, reinicie o sistema manualmente:"
-    log_msg green "sudo reboot"
-    break
-  else
-    log_msg yellow "Entrada inválida. Use 's' para Sim ou 'n' para Não."
+    if [[ "$found" == false ]]; then
+      printf '%s none swap sw 0 0\n' "$target"
+    fi
+  } > "$fstab_tmp"
+  if cmp -s -- "$fstab_tmp" "$FSTAB"; then
+    rm -f -- "$fstab_tmp"
+    fstab_tmp=
+    return
   fi
-done
+  fstab_backup=$(mktemp -- "${FSTAB}.backup.$(date +%Y%m%d_%H%M%S).XXXXXX") ||
+    error_exit "Falha ao reservar o backup do fstab."
+  cp --preserve=all -- "$FSTAB" "$fstab_backup" ||
+    error_exit "Falha ao gravar o backup do fstab."
+}
+
+rollback() {
+  local rc=$? index device actual_guid healthy=true safe_to_remove=true
+  trap - EXIT
+  trap '' INT TERM HUP
+  set +e
+  if [[ "$committed" != true && ( "$activation_started" == true || "${#off_devices[@]}" -gt 0 ) ]]; then
+    if read_active_swaps; then
+      for index in "${!off_devices[@]}"; do
+        device=${off_devices[index]}
+        [[ -n "$work_dir" && -e "$work_dir/previous" ]] && same_device "$device" "$target" && continue
+        active_index "$device" >/dev/null && continue
+        activation_args "${off_options[index]}" "${off_priorities[index]}"
+        swapon "${swap_args[@]}" -- "$device" || { log_msg red "Não foi possível reativar $device." >&2; healthy=false; }
+      done
+      if [[ "$activation_started" == true ]]; then
+        if [[ "$healthy" != true ]] || { active_index "$target" >/dev/null && ! swapoff -- "$target"; }; then
+          safe_to_remove=false
+        fi
+      fi
+    else
+      safe_to_remove=false
+    fi
+  fi
+
+  if [[ "$committed" != true && "$safe_to_remove" == true ]]; then
+    if [[ "$file_installed" == true ]]; then
+      if [[ "$(stat -c '%d:%i' -- "$target")" != "$installed_id" ]] || ! rm -f -- "$target"; then
+        safe_to_remove=false
+      fi
+    fi
+    if [[ "$safe_to_remove" == true && -n "$work_dir" && -e "$work_dir/previous" ]]; then
+      if mv -T --no-clobber -- "$work_dir/previous" "$target" && [[ ! -e "$work_dir/previous" ]]; then
+        if [[ -n "$original_active" ]]; then
+          activation_args "$target_options" "$original_priority"
+          swapon "${swap_args[@]}" -- "$target" || log_msg red "Arquivo antigo restaurado, mas não reativado: $target." >&2
+        fi
+      else
+        safe_to_remove=false
+      fi
+    fi
+    if [[ "$zvol_created" == true ]]; then
+      if [[ ! "$zvol_guid" =~ ^[0-9]+$ ]] ||
+         ! actual_guid=$(zfs get -Hp -o value guid "$dataset") ||
+         [[ "$actual_guid" != "$zvol_guid" ]]; then
+        log_msg red "Identidade do zvol não confirmada; não removido: $dataset." >&2
+      elif ! zfs destroy "$dataset"; then
+        log_msg red "Não foi possível remover o zvol criado nesta execução: $dataset." >&2
+      fi
+    fi
+  fi
+  if [[ "$safe_to_remove" == true ]]; then
+    if [[ -n "$work_dir" ]]; then
+      rm -f -- "$work_dir/next" "$work_dir/previous"
+      rmdir -- "$work_dir" 2>/dev/null || :
+    fi
+  else
+    log_msg red "Rollback incompleto. Verifique os swaps ativos; recursos preservados: $target ${work_dir:-}." >&2
+  fi
+  if [[ -n "$fstab_tmp" ]]; then
+    rm -f -- "$fstab_tmp"
+  fi
+  exit "$rc"
+}
+
+persist_tuning() {
+  local contents tmp
+  contents=$'# Gerenciado pelo swap.sh\nvm.swappiness = 10\nvm.vfs_cache_pressure = 50\nvm.dirty_ratio = 15\nvm.dirty_background_ratio = 5'
+  if [[ -L "$SYSCTL_FILE" || ( -e "$SYSCTL_FILE" && ! -f "$SYSCTL_FILE" ) ]]; then
+    log_msg yellow "Ajustes não aplicados: $SYSCTL_FILE não é um arquivo regular."
+    return
+  fi
+  if [[ -e "$SYSCTL_FILE" ]]; then
+    if ! cmp -s -- "$SYSCTL_FILE" <(printf '%s\n' "$contents"); then
+      log_msg yellow "Ajustes não aplicados: $SYSCTL_FILE já existe com conteúdo diferente."
+      return
+    fi
+  else
+    if ! { mkdir -p -- "${SYSCTL_FILE%/*}" &&
+           tmp=$(mktemp -- "${SYSCTL_FILE}.XXXXXX") &&
+           printf '%s\n' "$contents" > "$tmp" &&
+           chmod 644 -- "$tmp" &&
+           ln -T -- "$tmp" "$SYSCTL_FILE"; }; then
+      if [[ -n "${tmp:-}" ]]; then rm -f -- "$tmp"; fi
+      log_msg yellow "Não foi possível gravar os ajustes em $SYSCTL_FILE."
+      return
+    fi
+    rm -f -- "$tmp"
+  fi
+  if sysctl -p "$SYSCTL_FILE" >/dev/null; then
+    log_msg green "Ajustes de memória aplicados e registrados em $SYSCTL_FILE."
+  else
+    log_msg yellow "Swap configurado, mas nem todos os ajustes de memória puderam ser aplicados."
+  fi
+}
+
+main() {
+  local custom_size='' replace=false ram_kb size size_bytes allocated difference page_size index device options
+  local fs_type target pool='' dataset='' target_exists original_fstab fstab_tmp='' fstab_backup=''
+  local original_active='' original_priority='' work_dir='' staged_file='' fstab_changed=false
+  local zvol_created=false zvol_guid='' file_installed=false installed_id=''
+  local prepared_with_dd=false activation_started=false committed=false
+  local log_enabled=false
+  local -a active_devices active_sizes active_priorities foreign_fstab foreign_fstab_devices
+  local -a foreign_fstab_options target_entries fstab_lines swap_args
+  local -a old_devices=() old_priorities=() old_options=() off_devices=() off_priorities=() off_options=()
+
+  while (( $# )); do
+    case "$1" in
+      --size)
+        [[ $# -ge 2 ]] || error_exit "Informe um tamanho após --size."
+        custom_size=$2
+        size_bytes=$(parse_size_to_bytes "$custom_size") || error_exit "Tamanho inválido: use um inteiro positivo seguido de M ou G."
+        shift ;;
+      --replace-existing) replace=true ;;
+      --help) exibir_ajuda; return ;;
+      *) error_exit "Opção inválida: $1. Consulte --help." ;;
+    esac
+    shift
+  done
+  require_root
+  for device in findmnt findfs swapon swapoff blkid lsblk mkswap stat mktemp cmp df awk flock sysctl; do
+    check_command "$device"
+  done
+  umask 077
+  [[ ! -L "$LOCK_FILE" && ( ! -e "$LOCK_FILE" || ( -f "$LOCK_FILE" && -O "$LOCK_FILE" ) ) ]] ||
+    error_exit "Arquivo de bloqueio inválido: $LOCK_FILE."
+  exec 9>>"$LOCK_FILE"
+  flock -n 9 || error_exit "Outra execução de swap.sh está em andamento."
+  if [[ -t 1 && -z "${NO_COLOR-}" ]]; then
+    exibir_banner
+  else
+    log_msg green "Script de configuração de SWAP versão $SCRIPT_VERSION"
+  fi
+
+  select_target
+  [[ -f "$FSTAB" && ! -L "$FSTAB" ]] || error_exit "O fstab deve ser um arquivo regular, sem link simbólico."
+  original_fstab=$(read_fstab) || error_exit "Não foi possível ler o fstab."
+  read_active_swaps || error_exit "Não foi possível inventariar os swaps ativos; nenhuma alteração realizada."
+  analyze_fstab
+  for index in "${!active_devices[@]}"; do
+    device=${active_devices[index]}
+    if same_device "$device" "$target"; then
+      original_active=$device
+      original_priority=${active_priorities[index]}
+      allocated=${active_sizes[index]}
+    else
+      old_devices+=("$device")
+      old_priorities+=("${active_priorities[index]}")
+    fi
+  done
+
+  if (( ${#old_devices[@]} + ${#foreign_fstab[@]} > 0 )); then
+    if [[ "$replace" == false ]]; then
+      log_msg yellow "Swap existente preservado. Para migrar um swap do fstab, use --replace-existing após revisar a configuração."
+      return
+    fi
+    migration_guards
+    for device in "${old_devices[@]}"; do
+      options=$(find_fstab_options "$device") ||
+        error_exit "Swap ativo fora do fstab ($device). Faça a migração manualmente."
+      old_options+=("$options")
+    done
+  fi
+
+  if [[ "$fs_type" != zfs ]]; then
+    case "$fs_type" in
+      ext2|ext3|ext4|xfs) ;;
+      btrfs) check_command btrfs ;;
+      *) error_exit "Sistema de arquivos sem suporte para swapfile: $fs_type." ;;
+    esac
+  fi
+  inspect_target
+  if [[ "$target_exists" == false && -n "$original_active" ]]; then
+    error_exit "O swap ativo $original_active não pôde ser identificado no disco."
+  fi
+  if [[ "$target_exists" == true && -z "$original_active" && ",$target_options," == *,noauto,* ]]; then
+    error_exit "O alvo já está no fstab com noauto. Preserve a configuração ou ative-o manualmente."
+  fi
+
+  if [[ -z "$custom_size" ]]; then
+    ram_kb=$(awk '$1 == "MemTotal:" {print $2; exit}' "$MEMINFO")
+    [[ "$ram_kb" =~ ^[1-9][0-9]{0,12}$ ]] || error_exit "Não foi possível detectar a RAM."
+    size=$(automatic_size "$((ram_kb / 1024))")
+    size_bytes=$(parse_size_to_bytes "$size")
+  fi
+
+  local provision=true
+  if [[ "$target_exists" == true ]]; then
+    provision=false
+    if [[ -n "$custom_size" ]]; then
+      if [[ -z "$original_active" ]]; then
+        if [[ "$fs_type" == zfs ]]; then
+          allocated=$(zfs get -Hp -o value volsize "$dataset") || error_exit "Falha ao consultar o tamanho do zvol."
+        else
+          allocated=$(stat -c %s -- "$target") || error_exit "Falha ao consultar o tamanho do arquivo."
+        fi
+      fi
+      [[ "$allocated" =~ ^[1-9][0-9]{0,17}$ ]] || error_exit "Tamanho do swap existente inválido."
+      difference=$((size_bytes - allocated))
+      # Somente a diferença de até uma página do kernel é metadado do swap.
+      page_size=$(getconf PAGESIZE) || error_exit "Não foi possível obter o tamanho de página do kernel."
+      [[ "$page_size" =~ ^[1-9][0-9]{0,6}$ ]] || error_exit "Tamanho de página do kernel inválido."
+      if (( difference > page_size || difference < 0 )); then
+        [[ "$fs_type" != zfs ]] || error_exit "O zvol existente não será redimensionado automaticamente: $dataset."
+        migration_guards
+        provision=true
+      fi
+    fi
+  fi
+  if [[ "$provision" == true ]]; then check_space; fi
+
+  if [[ ! -L "$LOG_FILE" && ( ! -e "$LOG_FILE" || -f "$LOG_FILE" ) ]] &&
+     touch -- "$LOG_FILE" 2>/dev/null; then
+    log_enabled=true
+  fi
+
+  trap rollback EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+
+  log_msg blue "Alvo: $target. Swaps externos ativos a desativar: ${#old_devices[@]}."
+  [[ "$(read_fstab)" == "$original_fstab" ]] || error_exit "O fstab foi alterado durante a execução."
+  prepare_fstab
+
+  if [[ "$provision" == true && "$fs_type" == zfs ]]; then
+    create_zvol
+  elif [[ "$provision" == true ]]; then
+    prepare_swapfile
+    if [[ "$target_exists" == true ]]; then
+      if [[ -n "$original_active" ]]; then
+        deactivate_old "$original_active" "$original_priority" "$target_options"
+      fi
+      mv -T -- "$target" "$work_dir/previous" || error_exit "Falha ao preservar o arquivo de swap antigo."
+    fi
+    install_staged_file
+  fi
+
+  if [[ -z "$original_active" || "$provision" == true ]]; then
+    activation_started=true
+    activation_args "$target_options" "$original_priority"
+    local swapon_error
+    if ! swapon_error=$(LC_ALL=C swapon "${swap_args[@]}" -- "$target" 2>&1); then
+      if [[ "$file_installed" == true && "$fs_type" != btrfs && "$prepared_with_dd" == false &&
+            "$swapon_error" == *holes* ]]; then
+        if ! read_active_swaps || active_index "$target" >/dev/null ||
+           [[ "$(stat -c '%d:%i' -- "$target")" != "$installed_id" ]]; then
+          error_exit "Não foi possível confirmar que o arquivo pode ser substituído pelo fallback."
+        fi
+        rm -- "$target" || error_exit "Falha ao retirar o arquivo que não pôde ser ativado."
+        file_installed=false
+        prepare_swapfile true
+        install_staged_file
+        swapon "${swap_args[@]}" -- "$target" || error_exit "Falha ao ativar $target após preparar com dd."
+      else
+        error_exit "Falha ao ativar $target: $swapon_error"
+      fi
+    fi
+  fi
+  if ! read_active_swaps || ! active_index "$target" >/dev/null; then
+    error_exit "Não foi possível confirmar que o swap alvo está ativo."
+  fi
+  log_msg green "Ativação confirmada: $target."
+  for index in "${!old_devices[@]}"; do
+    deactivate_old "${old_devices[index]}" "${old_priorities[index]}" "${old_options[index]}"
+  done
+  if ! read_active_swaps || ! active_index "$target" >/dev/null || (( ${#active_devices[@]} != 1 )); then
+    error_exit "O estado final dos swaps ativos não corresponde ao plano."
+  fi
+
+  [[ "$(read_fstab)" == "$original_fstab" ]] || error_exit "O fstab foi alterado durante a execução."
+  if [[ -n "$fstab_tmp" ]]; then
+    # Evita separar a confirmação do commit do rename por um sinal tratável.
+    trap '' INT TERM HUP
+    mv -T -- "$fstab_tmp" "$FSTAB" || error_exit "Falha ao gravar o fstab."
+    fstab_tmp=
+    fstab_changed=true
+  fi
+  committed=true
+  trap - EXIT INT TERM HUP
+  if [[ -n "$work_dir" ]]; then
+    if ! rm -f -- "$work_dir/previous" || ! rmdir -- "$work_dir"; then
+      log_msg yellow "Troca concluída, mas o diretório de trabalho não foi removido: $work_dir."
+    fi
+  fi
+
+  umask 022
+  if [[ "$fstab_changed" == true ]]; then
+    log_msg green "Entrada de swap atualizada em $FSTAB. Backup: $fstab_backup"
+    if [[ -d "$SYSTEMD_DIR" ]] && ! systemctl daemon-reload; then
+      log_msg yellow "Não foi possível recarregar o systemd. Execute systemctl daemon-reload após verificar o fstab."
+    fi
+  fi
+  persist_tuning
+  index=$(active_index "$target")
+  log_msg green "Swap ativo em $target: ${active_sizes[index]} bytes. Não é necessário reiniciar."
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
