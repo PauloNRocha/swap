@@ -2,6 +2,8 @@
 
 ## [Não lançado]
 
+## [1.5.9] - 2026-11-26
+
 ### Adicionado
 
 - Opção `--replace-existing` para migrar explicitamente swaps compatíveis registrados no `/etc/fstab`, inclusive em LVM.
